@@ -217,30 +217,25 @@ class TypingService : AccessibilityService() {
                 val rect = keyboardKeysMap[char]
 
                 if (rect != null) {
-                    // حساب نقطة المنتصف للزرار
                     val centerX = rect.centerX()
                     val centerY = rect.centerY()
 
                     Log.d(TAG, "النقر على: '$char' في ($centerX, $centerY)")
 
-                    // إنشاء حركة النقر (Gesture)
                     val clickPath = Path().apply {
                         moveTo(centerX.toFloat(), centerY.toFloat())
                     }
 
                     val clickGesture = GestureDescription.Builder()
-                        .addStroke(GestureDescription.StrokeDescription(clickPath, 0, 50)) // 50ms نقرة
+                        .addStroke(GestureDescription.StrokeDescription(clickPath, 0, 50))
                         .build()
 
-                    // تنفيذ النقرة
                     dispatchGesture(clickGesture, null, null)
 
                     index++
-                    // انتظار 150ms بين كل نقرة عشان الكيبورد يلحق يستجيب
                     handler.postDelayed(this, 150)
                 } else {
                     Log.e(TAG, "الحرف '$char' مش موجود في خريطة الكيبورد!")
-                    // محاولة استخدام الطريقة البديلة لهذا الحرف
                     index++
                     handler.postDelayed(this, 50)
                 }
@@ -255,35 +250,42 @@ class TypingService : AccessibilityService() {
      * الطريقة البديلة: استخدام ACTION_SET_TEXT مباشرة على EditText
      */
     private fun typeUsingSetText() {
-        val inputNode = findActiveInputNode()
+        val inputNode = findActiveInputNode() ?: run {
+            Toast.makeText(this, "الرجاء الضغط على مربع نص أولاً", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        if (inputNode != null) {
-            isTyping = true
-            var index = 0
-            var currentText = ""
-            var node = inputNode
+        isTyping = true
+        var index = 0
+        var currentText = ""
 
-            val runnable = object : Runnable {
-                override fun run() {
-                    if (index >= typingText.length || !isTyping) {
-                        isTyping = false
-                        node.recycle()
-                        Toast.makeText(this@TypingService, "✅ تمت الكتابة بنجاح", Toast.LENGTH_SHORT).show()
-                        return
+        val runnable = object : Runnable {
+            private var currentNode: AccessibilityNodeInfo? = inputNode
+
+            override fun run() {
+                if (index >= typingText.length || !isTyping) {
+                    isTyping = false
+                    currentNode?.recycle()
+                    currentNode = null
+                    Toast.makeText(this@TypingService, "✅ تمت الكتابة بنجاح", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                try {
+                    currentText += typingText[index]
+
+                    // محاولة الحصول على عقدة محدثة
+                    val freshFocus = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    if (freshFocus != null && freshFocus.isEditable) {
+                        currentNode?.recycle()
+                        currentNode = freshFocus
+                    } else {
+                        freshFocus?.recycle()
                     }
 
-                    try {
-                        currentText += typingText[index]
+                    val targetNode = currentNode
 
-                        val freshFocus = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                        val targetNode = if (freshFocus != null && freshFocus.isEditable) {
-                            node.recycle()
-                            freshFocus
-                        } else {
-                            freshFocus?.recycle()
-                            node
-                        }
-
+                    if (targetNode != null) {
                         val args = Bundle().apply {
                             putCharSequence(
                                 AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
@@ -291,30 +293,28 @@ class TypingService : AccessibilityService() {
                             )
                         }
 
-                        val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                        var success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
 
                         if (!success) {
                             targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                             Thread.sleep(50)
-                            targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                            success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
                         }
-
-                        node = targetNode
-                        index++
-                        handler.postDelayed(this, 100)
-
-                    } catch (e: Exception) {
-                        Log.e(TAG, "خطأ في الكتابة", e)
-                        isTyping = false
-                        node.recycle()
-                        Toast.makeText(this@TypingService, "❌ فشلت الكتابة: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
+
+                    index++
+                    handler.postDelayed(this, 100)
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "خطأ في الكتابة", e)
+                    isTyping = false
+                    currentNode?.recycle()
+                    currentNode = null
+                    Toast.makeText(this@TypingService, "❌ فشلت الكتابة: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
-            handler.post(runnable)
-        } else {
-            Toast.makeText(this, "الرجاء الضغط على مربع نص أولاً", Toast.LENGTH_SHORT).show()
         }
+        handler.post(runnable)
     }
 
     /**
