@@ -22,10 +22,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install required Android SDK platforms
+        run: |
+          yes | sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          echo "✅ SDK platform 34 installed"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build APK
+      - name: Build Debug APK
         run: ./gradlew assembleDebug
 
       - name: Upload APK as artifact
@@ -36,7 +41,7 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
+        if: success()
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "Build v1.0.${{ github.run_number }}"

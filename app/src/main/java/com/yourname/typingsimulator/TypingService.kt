@@ -2,18 +2,21 @@ package com.yourname.typingsimulator
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 
 class TypingService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     var isTyping = false
 
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // لا نحتاج معالجة الأحداث هنا، نستخدم زر الوصول فقط
     }
 
@@ -22,10 +25,11 @@ class TypingService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
     }
 
-    override fun onAccessibilityButtonClicked() {
+    @RequiresApi(Build.VERSION_CODES.S)
+    override fun onAccessibilityButtonClicked(): Boolean {
         if (isTyping) {
             Toast.makeText(this, R.string.typing_in_progress, Toast.LENGTH_SHORT).show()
-            return
+            return true
         }
 
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
@@ -33,7 +37,7 @@ class TypingService : AccessibilityService() {
 
         if (textToType.isEmpty()) {
             Toast.makeText(this, R.string.no_text, Toast.LENGTH_SHORT).show()
-            return
+            return true
         }
 
         // البحث عن مربع النص (EditText) النشط حالياً في الشاشة
@@ -44,6 +48,7 @@ class TypingService : AccessibilityService() {
         } else {
             Toast.makeText(this, R.string.tap_text_field, Toast.LENGTH_SHORT).show()
         }
+        return true
     }
 
     private fun typeTextLetterByLetter(node: AccessibilityNodeInfo, text: String) {
