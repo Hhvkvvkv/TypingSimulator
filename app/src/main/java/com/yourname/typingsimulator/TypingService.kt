@@ -30,7 +30,7 @@ class TypingService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForegroundService()
+        showNotification()
     }
 
     private fun createNotificationChannel() {
@@ -47,7 +47,7 @@ class TypingService : AccessibilityService() {
         }
     }
 
-    private fun startForegroundService() {
+    private fun showNotification() {
         val startTypingIntent = Intent(this, TypingService::class.java).apply {
             action = ACTION_START_TYPING
         }
