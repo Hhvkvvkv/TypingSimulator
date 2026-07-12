@@ -1,7 +1,6 @@
 package com.yourname.typingsimulator
 
 import android.accessibilityservice.AccessibilityService
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -30,7 +29,7 @@ class TypingService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        showNotification()
+        showPersistentNotification()
     }
 
     private fun createNotificationChannel() {
@@ -47,25 +46,40 @@ class TypingService : AccessibilityService() {
         }
     }
 
-    private fun showNotification() {
-        val startTypingIntent = Intent(this, TypingService::class.java).apply {
+    private fun showPersistentNotification() {
+        val startIntent = Intent(this, TypingService::class.java).apply {
             action = ACTION_START_TYPING
         }
         val pendingIntent = PendingIntent.getService(
-            this, 0, startTypingIntent,
+            this, 0, startIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("محاكاة الكتابة")
-            .setContentText("اضغط لبدء محاكاة الكتابة")
+            .setContentText("اضغط لبدء الكتابة التلقائية")
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
 
-        startForeground(NOTIFICATION_ID, notification)
+        // محاولة تشغيل foreground service، مع تجاهل الخطأ لو مش مدعوم
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                // على Android 14+ نحتاج foregroundServiceType في manifest
+                // بما أننا مش مضيفينه، نستخدم notification عادي
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.notify(NOTIFICATION_ID, notification)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            try {
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.notify(NOTIFICATION_ID, notification)
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
