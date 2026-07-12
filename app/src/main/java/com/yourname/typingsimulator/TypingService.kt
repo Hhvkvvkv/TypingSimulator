@@ -2,14 +2,12 @@ package com.yourname.typingsimulator
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
-import androidx.annotation.RequiresApi
 
 class TypingService : AccessibilityService() {
 
@@ -25,8 +23,11 @@ class TypingService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
     }
 
-    @RequiresApi(Build.VERSION_CODES.S)
-    override fun onAccessibilityButtonClicked(): Boolean {
+    override fun onAccessibilityButtonClicked(buttonId: Int): Boolean {
+        return handleAccessibilityButton()
+    }
+
+    private fun handleAccessibilityButton(): Boolean {
         if (isTyping) {
             Toast.makeText(this, R.string.typing_in_progress, Toast.LENGTH_SHORT).show()
             return true
