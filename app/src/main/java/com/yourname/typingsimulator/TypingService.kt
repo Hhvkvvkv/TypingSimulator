@@ -1,12 +1,14 @@
 package com.yourname.typingsimulator
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -14,6 +16,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
@@ -22,6 +25,9 @@ class TypingService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var isTyping = false
     private var typingText = ""
+
+    // خريطة لتخزين الحرف والإحداثيات بتاعته من لوحة المفاتيح
+    private val keyboardKeysMap = mutableMapOf<String, Rect>()
 
     companion object {
         const val CHANNEL_ID = "typing_service_channel"
@@ -113,14 +119,201 @@ class TypingService : AccessibilityService() {
             return
         }
 
-        // البحث عن مربع النص النشط
-        val inputNode = findActiveInputNode()
-        
-        if (inputNode != null) {
-            Log.d(TAG, "تم العثور على مربع نص: ${inputNode.className}")
-            typeTextLetterByLetter(inputNode)
+        // أولاً: نحاول البحث عن لوحة المفاتيح وخرائط الأزرار بتاعتها
+        Toast.makeText(this, "جارٍ مسح لوحة المفاتيح...", Toast.LENGTH_SHORT).show()
+        mapKeyboardElements()
+
+        if (keyboardKeysMap.isNotEmpty()) {
+            Log.d(TAG, "تم العثور على ${keyboardKeysMap.size} زر في الكيبورد")
+            Toast.makeText(this, "تم العثور على ${keyboardKeysMap.size} زر", Toast.LENGTH_SHORT).show()
+            // استخدام النقر على أزرار الكيبورد الحقيقية
+            typeUsingKeyboardClicks()
         } else {
-            Toast.makeText(this, "الرجاء الضغط على مربع نص (مربع دردشة) أولاً", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "لم يتم العثور على الكيبورد، استخدام طريقة SET_TEXT البديلة")
+            Toast.makeText(this, "لم يتم العثور على الكيبورد، استخدام الطريقة البديلة", Toast.LENGTH_SHORT).show()
+            // الرجوع للطريقة البديلة (SET_TEXT)
+            typeUsingSetText()
+        }
+    }
+
+    // ======================== الطريقة الأولى: اختراق نافذة الكيبورد ========================
+
+    /**
+     * البحث عن نافذة لوحة المفاتيح واستخراج كل الأزرار بإحداثياتها
+     */
+    private fun mapKeyboardElements() {
+        keyboardKeysMap.clear()
+
+        // 1. جلب كل النوافذ المعروضة على الشاشة حالياً
+        val allWindows = windows
+
+        var keyboardNode: AccessibilityNodeInfo? = null
+
+        // 2. البحث عن النافذة الخاصة بلوحة المفاتيح (Input Method Window)
+        for (window in allWindows) {
+            if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                keyboardNode = window.root
+                Log.d(TAG, "تم العثور على نافذة الكيبورد: ${window.id}")
+                break
+            }
+        }
+
+        if (keyboardNode == null) {
+            Log.e(TAG, "لم يتم العثور على لوحة المفاتيح!")
+            return
+        }
+
+        // 3. استخراج العناصر (الأزرار) من شجرة الكيبورد
+        extractKeysFromNode(keyboardNode)
+        keyboardNode.recycle()
+
+        Log.d(TAG, "تم التقاط الأزرار: ${keyboardKeysMap.keys}")
+    }
+
+    /**
+     * البحث المتعمق داخل شجرة الكيبورد لاستخراج الحروف والإحداثيات
+     */
+    private fun extractKeysFromNode(node: AccessibilityNodeInfo?) {
+        if (node == null) return
+
+        // قارئات الشاشة بتعتمد على contentDescription أو text لقراءة الزرار
+        val nodeText = node.text?.toString() ?: node.contentDescription?.toString()
+
+        if (!nodeText.isNullOrEmpty() && nodeText.length <= 2) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+
+            // نتأكد إن الزرار له حجم فعلي على الشاشة
+            if (rect.width() > 0 && rect.height() > 0) {
+                keyboardKeysMap[nodeText.lowercase()] = rect
+                Log.d(TAG, "زرار: '$nodeText' -> ($rect)")
+            }
+        }
+
+        // الدخول في العناصر الفرعية (الأبناء)
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            child?.let { extractKeysFromNode(it) }
+            child?.recycle()
+        }
+    }
+
+    /**
+     * الكتابة عن طريق النقر الفعلي على أزرار الكيبورد باستخدام الإحداثيات
+     */
+    private fun typeUsingKeyboardClicks() {
+        isTyping = true
+        var index = 0
+
+        val runnable = object : Runnable {
+            override fun run() {
+                if (index >= typingText.length || !isTyping) {
+                    isTyping = false
+                    Toast.makeText(this@TypingService, "✅ تمت الكتابة بنجاح", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                val char = typingText[index].lowercase()
+                val rect = keyboardKeysMap[char]
+
+                if (rect != null) {
+                    // حساب نقطة المنتصف للزرار
+                    val centerX = rect.centerX()
+                    val centerY = rect.centerY()
+
+                    Log.d(TAG, "النقر على: '$char' في ($centerX, $centerY)")
+
+                    // إنشاء حركة النقر (Gesture)
+                    val clickPath = Path().apply {
+                        moveTo(centerX.toFloat(), centerY.toFloat())
+                    }
+
+                    val clickGesture = GestureDescription.Builder()
+                        .addStroke(GestureDescription.StrokeDescription(clickPath, 0, 50)) // 50ms نقرة
+                        .build()
+
+                    // تنفيذ النقرة
+                    dispatchGesture(clickGesture, null, null)
+
+                    index++
+                    // انتظار 150ms بين كل نقرة عشان الكيبورد يلحق يستجيب
+                    handler.postDelayed(this, 150)
+                } else {
+                    Log.e(TAG, "الحرف '$char' مش موجود في خريطة الكيبورد!")
+                    // محاولة استخدام الطريقة البديلة لهذا الحرف
+                    index++
+                    handler.postDelayed(this, 50)
+                }
+            }
+        }
+        handler.post(runnable)
+    }
+
+    // ======================== الطريقة الثانية: SET_TEXT (Fallback) ========================
+
+    /**
+     * الطريقة البديلة: استخدام ACTION_SET_TEXT مباشرة على EditText
+     */
+    private fun typeUsingSetText() {
+        val inputNode = findActiveInputNode()
+
+        if (inputNode != null) {
+            isTyping = true
+            var index = 0
+            var currentText = ""
+            var node = inputNode
+
+            val runnable = object : Runnable {
+                override fun run() {
+                    if (index >= typingText.length || !isTyping) {
+                        isTyping = false
+                        node.recycle()
+                        Toast.makeText(this@TypingService, "✅ تمت الكتابة بنجاح", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+
+                    try {
+                        currentText += typingText[index]
+
+                        val freshFocus = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                        val targetNode = if (freshFocus != null && freshFocus.isEditable) {
+                            node.recycle()
+                            freshFocus
+                        } else {
+                            freshFocus?.recycle()
+                            node
+                        }
+
+                        val args = Bundle().apply {
+                            putCharSequence(
+                                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                currentText
+                            )
+                        }
+
+                        val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+
+                        if (!success) {
+                            targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            Thread.sleep(50)
+                            targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                        }
+
+                        node = targetNode
+                        index++
+                        handler.postDelayed(this, 100)
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "خطأ في الكتابة", e)
+                        isTyping = false
+                        node.recycle()
+                        Toast.makeText(this@TypingService, "❌ فشلت الكتابة: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            handler.post(runnable)
+        } else {
+            Toast.makeText(this, "الرجاء الضغط على مربع نص أولاً", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -128,27 +321,19 @@ class TypingService : AccessibilityService() {
      * البحث عن مربع النص النشط في الشاشة الحالية
      */
     private fun findActiveInputNode(): AccessibilityNodeInfo? {
-        // أولاً: البحث عن الـ EditText الم聚焦 (focused)
         val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focusedNode != null && focusedNode.isEditable && focusedNode.isEnabled) {
             return focusedNode
         }
         focusedNode?.recycle()
-
-        // ثانياً: البحث عن أول EditText في الشاشة إذا لم يتم العثور على focused
         return findFirstEditableNode(rootInActiveWindow)
     }
 
-    /**
-     * البحث عن أول عنصر نصي قابل للتحرير في شجرة الواجهة
-     */
     private fun findFirstEditableNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (root == null) return null
-
         if (root.isEditable && root.isEnabled && root.isVisibleToUser) {
             return root
         }
-
         for (i in 0 until root.childCount) {
             val child = root.getChild(i)
             val result = findFirstEditableNode(child)
@@ -158,71 +343,6 @@ class TypingService : AccessibilityService() {
             }
             child?.recycle()
         }
-
         return null
-    }
-
-    /**
-     * كتابة النص حرفاً بحرف مع تحديث العقدة في كل مرة
-     */
-    private fun typeTextLetterByLetter(initialNode: AccessibilityNodeInfo) {
-        isTyping = true
-        var index = 0
-        var currentText = ""
-        var node = initialNode
-
-        val runnable = object : Runnable {
-            override fun run() {
-                if (index >= typingText.length || !isTyping) {
-                    isTyping = false
-                    node.recycle()
-                    Toast.makeText(this@TypingService, "✅ تمت الكتابة بنجاح", Toast.LENGTH_SHORT).show()
-                    return
-                }
-
-                try {
-                    // إضافة الحرف الجديد
-                    currentText += typingText[index]
-
-                    // محاولة الحصول على عقدة محدثة
-                    val freshFocus = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    val targetNode = if (freshFocus != null && freshFocus.isEditable) {
-                        node.recycle()
-                        freshFocus
-                    } else {
-                        freshFocus?.recycle()
-                        node
-                    }
-
-                    // كتابة النص باستخدام ACTION_SET_TEXT
-                    val args = Bundle().apply {
-                        putCharSequence(
-                            AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                            currentText
-                        )
-                    }
-                    
-                    val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                    
-                    if (!success) {
-                        // محاولة بديلة: استخدم ACTION_CLICK أولاً ثم ACTION_SET_TEXT
-                        targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Thread.sleep(50)
-                        targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                    }
-
-                    node = targetNode
-                    index++
-                    handler.postDelayed(this, 100)
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "خطأ في الكتابة", e)
-                    isTyping = false
-                    node.recycle()
-                    Toast.makeText(this@TypingService, "❌ فشلت الكتابة: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-        handler.post(runnable)
     }
 }
