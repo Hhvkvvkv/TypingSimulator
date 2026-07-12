@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">محاكاة الكتابة</string>
+    <string name="app_title">محاكاة الكتابة</string>
+    <string name="hint_text">أدخل النص المراد محاكاته هنا...</string>
+    <string name="btn_save">حفظ النص</string>
+    <string name="btn_accessibility">تفعيل إذن إمكانية الوصول</string>
+    <string name="accessibility_description">هذا التطبيق يحتاج الصلاحية لمحاكاة الكتابة التلقائية.</string>
+    <string name="text_saved">تم حفظ النص بنجاح!</string>
+    <string name="no_text">لا يوجد نص محفوظ لمحاكاته</string>
+    <string name="typing_in_progress">الكتابة جارية بالفعل...</string>
+    <string name="tap_text_field">الرجاء الضغط على مربع نص (مربع دردشة) أولاً</string>
+</resources>
