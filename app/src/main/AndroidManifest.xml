@@ -11,13 +11,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TypingSimulator">
 
-        <!-- Shizuku provider for shell access -->
-        <provider
-            android:name="moe.shizuku.api.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="false" />
-
         <activity android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
