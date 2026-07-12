@@ -1,6 +1,7 @@
 package com.yourname.typingsimulator
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -18,12 +20,14 @@ import androidx.core.app.NotificationCompat
 class TypingService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    var isTyping = false
+    private var isTyping = false
+    private var typingText = ""
 
     companion object {
         const val CHANNEL_ID = "typing_service_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_START_TYPING = "com.yourname.typingsimulator.START_TYPING"
+        const val TAG = "TypingService"
     }
 
     override fun onCreate() {
@@ -64,11 +68,8 @@ class TypingService : AccessibilityService() {
             .setOngoing(true)
             .build()
 
-        // محاولة تشغيل foreground service، مع تجاهل الخطأ لو مش مدعوم
         try {
             if (Build.VERSION.SDK_INT >= 34) {
-                // على Android 14+ نحتاج foregroundServiceType في manifest
-                // بما أننا مش مضيفينه، نستخدم notification عادي
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 manager.notify(NOTIFICATION_ID, notification)
             } else {
@@ -90,7 +91,7 @@ class TypingService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // لا نحتاج معالجة الأحداث هنا
+        // يمكن استخدام الأحداث لتحسين التجربة مستقبلاً
     }
 
     override fun onInterrupt() {
@@ -100,49 +101,125 @@ class TypingService : AccessibilityService() {
 
     private fun startTyping() {
         if (isTyping) {
-            Toast.makeText(this, R.string.typing_in_progress, Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "الكتابة جارية بالفعل...", Toast.LENGTH_SHORT).show()
             return
         }
 
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
-        val textToType = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
+        typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
 
-        if (textToType.isEmpty()) {
-            Toast.makeText(this, R.string.no_text, Toast.LENGTH_SHORT).show()
+        if (typingText.isEmpty()) {
+            Toast.makeText(this, "لا يوجد نص محفوظ لمحاكاته", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-
-        if (focusedNode != null && focusedNode.isEditable) {
-            typeTextLetterByLetter(focusedNode, textToType)
+        // البحث عن مربع النص النشط
+        val inputNode = findActiveInputNode()
+        
+        if (inputNode != null) {
+            Log.d(TAG, "تم العثور على مربع نص: ${inputNode.className}")
+            typeTextLetterByLetter(inputNode)
         } else {
-            Toast.makeText(this, R.string.tap_text_field, Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "الرجاء الضغط على مربع نص (مربع دردشة) أولاً", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun typeTextLetterByLetter(node: AccessibilityNodeInfo, text: String) {
+    /**
+     * البحث عن مربع النص النشط في الشاشة الحالية
+     */
+    private fun findActiveInputNode(): AccessibilityNodeInfo? {
+        // أولاً: البحث عن الـ EditText الم聚焦 (focused)
+        val focusedNode = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedNode != null && focusedNode.isEditable && focusedNode.isEnabled) {
+            return focusedNode
+        }
+        focusedNode?.recycle()
+
+        // ثانياً: البحث عن أول EditText في الشاشة إذا لم يتم العثور على focused
+        return findFirstEditableNode(rootInActiveWindow)
+    }
+
+    /**
+     * البحث عن أول عنصر نصي قابل للتحرير في شجرة الواجهة
+     */
+    private fun findFirstEditableNode(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (root == null) return null
+
+        if (root.isEditable && root.isEnabled && root.isVisibleToUser) {
+            return root
+        }
+
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i)
+            val result = findFirstEditableNode(child)
+            if (result != null) {
+                child?.recycle()
+                return result
+            }
+            child?.recycle()
+        }
+
+        return null
+    }
+
+    /**
+     * كتابة النص حرفاً بحرف مع تحديث العقدة في كل مرة
+     */
+    private fun typeTextLetterByLetter(initialNode: AccessibilityNodeInfo) {
         isTyping = true
-        var currentText = ""
         var index = 0
+        var currentText = ""
+        var node = initialNode
 
         val runnable = object : Runnable {
             override fun run() {
-                if (index < text.length) {
-                    currentText += text[index]
+                if (index >= typingText.length || !isTyping) {
+                    isTyping = false
+                    node.recycle()
+                    Toast.makeText(this@TypingService, "✅ تمت الكتابة بنجاح", Toast.LENGTH_SHORT).show()
+                    return
+                }
 
-                    val arguments = Bundle().apply {
+                try {
+                    // إضافة الحرف الجديد
+                    currentText += typingText[index]
+
+                    // محاولة الحصول على عقدة محدثة
+                    val freshFocus = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    val targetNode = if (freshFocus != null && freshFocus.isEditable) {
+                        node.recycle()
+                        freshFocus
+                    } else {
+                        freshFocus?.recycle()
+                        node
+                    }
+
+                    // كتابة النص باستخدام ACTION_SET_TEXT
+                    val args = Bundle().apply {
                         putCharSequence(
                             AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
                             currentText
                         )
                     }
-                    node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                    
+                    val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                    
+                    if (!success) {
+                        // محاولة بديلة: استخدم ACTION_CLICK أولاً ثم ACTION_SET_TEXT
+                        targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Thread.sleep(50)
+                        targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                    }
 
+                    node = targetNode
                     index++
                     handler.postDelayed(this, 100)
-                } else {
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "خطأ في الكتابة", e)
                     isTyping = false
+                    node.recycle()
+                    Toast.makeText(this@TypingService, "❌ فشلت الكتابة: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
