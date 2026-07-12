@@ -1,20 +1,21 @@
 package com.yourname.typingsimulator
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
@@ -28,7 +29,7 @@ class TypingService : AccessibilityService() {
         const val CHANNEL_ID = "typing_service_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_START_TYPING = "com.yourname.typingsimulator.START_TYPING"
-        const val TAG = "TypingService"
+        const val TAG = "TypingSimulator"
     }
 
     override fun onCreate() {
@@ -39,13 +40,10 @@ class TypingService : AccessibilityService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "خدمة المحاكاة",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply { description = "إشعار خدمة محاكاة الكتابة" }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "خدمة المحاكاة", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "إشعار خدمة محاكاة الكتابة"
+            }
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
     }
 
@@ -60,9 +58,9 @@ class TypingService : AccessibilityService() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent).setOngoing(true).build()
         try {
-            if (Build.VERSION.SDK_INT >= 34) {
+            if (Build.VERSION.SDK_INT >= 34)
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, notification)
-            } else startForeground(NOTIFICATION_ID, notification)
+            else startForeground(NOTIFICATION_ID, notification)
         } catch (_: Exception) {}
     }
 
@@ -70,191 +68,147 @@ class TypingService : AccessibilityService() {
         if (intent?.action == ACTION_START_TYPING) startTyping()
         return super.onStartCommand(intent, flags, startId)
     }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() { isTyping = false; handler.removeCallbacksAndMessages(null) }
 
-    // ========================= المحرك الرئيسي =========================
+    // ===================== المحرك الرئيسي =====================
 
     private fun startTyping() {
         if (isTyping) { Toast.makeText(this, "الكتابة جارية...", Toast.LENGTH_SHORT).show(); return }
+
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
         typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
         if (typingText.isEmpty()) { Toast.makeText(this, "لا يوجد نص محفوظ", Toast.LENGTH_SHORT).show(); return }
 
-        // === الخطة 1: Clipboard + Paste ===
-        if (tryClipboardPaste()) return
+        // سكن للكيبورد: نطبع كل الأزرار في Logcat عشان نشوف أسماء الحروف
+        printAllKeyboardKeys()
 
-        // === الخطة 2: SET_TEXT ===
-        typeUsingSetText()
-    }
+        isTyping = true
+        var delay = 0L
+        val baseDelay = (100..200).random() // تأخير عشوائي بشري
 
-    // ==================== الخطة 1: Clipboard + Paste ====================
-    // الأكثر ضماناً - تشتغل على واتساب، تيليجرام، أي تطبيق
+        for (char in typingText) {
+            val charStr = char.toString()
+            val currentDelay = delay
 
-    private fun tryClipboardPaste(): Boolean {
-        try {
-            // 1. نسخ النص إلى الحافظة
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("typing", typingText))
+            handler.postDelayed({
+                if (!isTyping) return@postDelayed
+                findAndClickKey(charStr)
+            }, currentDelay)
 
-            // 2. البحث عن مربع النص
-            val targetNode = findBestTextNode()
-            if (targetNode == null) {
-                Log.e(TAG, "لم يتم العثور على مربع نص")
-                return false
-            }
-
-            // 3. الضغط على المربع لتفعيله
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            Thread.sleep(300)
-
-            // 4. محاولة اللصق عبر Accessibility ACTION_PASTE
-            val pasted = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            if (pasted) {
-                Log.d(TAG, "✅ تم اللصق بنجاح!")
-                targetNode.recycle()
-                Toast.makeText(this, "✅ تمت الكتابة!", Toast.LENGTH_SHORT).show()
-                return true
-            }
-
-            // 5. لو ACTION_PASTE مشتغلش، نجرب نضغط long click عشان يظهر Paste
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)
-            Thread.sleep(500) // نستنى القائمة تظهر
-
-            // البحث عن زر Paste في الشاشة
-            val pasteButton = findPasteButton()
-            if (pasteButton != null) {
-                pasteButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                pasteButton.recycle()
-                targetNode.recycle()
-                Toast.makeText(this, "✅ تمت الكتابة!", Toast.LENGTH_SHORT).show()
-                return true
-            }
-
-            targetNode.recycle()
-            Log.e(TAG, "لم يتم العثور على زر Paste")
-            return false
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Clipboard error", e)
-            return false
+            delay += baseDelay + (50..150).random() // بين 150 و 350 مللي
         }
+
+        // رسالة النهاية
+        handler.postDelayed({
+            isTyping = false
+            Toast.makeText(this, "✅ تمت الكتابة!", Toast.LENGTH_SHORT).show()
+        }, delay + 500)
     }
 
-    // البحث عن زر Paste في الـ UI الحالي
-    private fun findPasteButton(): AccessibilityNodeInfo? {
-        return searchForText(rootInActiveWindow, "paste", "لصق")
-    }
+    // ===================== البحث عن الحرف والنقر =====================
 
-    private fun searchForText(node: AccessibilityNodeInfo?, vararg texts: String): AccessibilityNodeInfo? {
-        if (node == null) return null
-        val nodeText = node.text?.toString()?.lowercase() ?: node.contentDescription?.toString()?.lowercase() ?: ""
-        for (searchText in texts) {
-            if (nodeText.contains(searchText.lowercase())) {
-                if (node.isClickable) return node
+    private fun findAndClickKey(targetChar: String) {
+        val allWindows = windows
+        var imeRootNode: AccessibilityNodeInfo? = null
+
+        // 1. البحث عن نافذة لوحة المفاتيح (TYPE_INPUT_METHOD)
+        for (window in allWindows) {
+            if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                imeRootNode = window.root
+                break
             }
         }
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            val result = searchForText(child, *texts)
-            if (result != null) { child?.recycle(); return result }
-            child?.recycle()
-        }
-        return null
-    }
 
-    // ==================== الخطة 2: SET_TEXT ====================
-
-    private fun typeUsingSetText() {
-        val node = findBestTextNode() ?: run {
-            Toast.makeText(this, "اضغط على مربع نص أولاً", Toast.LENGTH_SHORT).show()
+        if (imeRootNode == null) {
+            Log.e(TAG, "لوحة المفاتيح غير ظاهرة!")
             return
         }
 
-        isTyping = true
-        var index = 0
+        // 2. البحث عن الحرف داخل شجرة الكيبورد
+        val keyRect = searchForCharNode(imeRootNode, targetChar.lowercase())
 
-        val runnable = object : Runnable {
-            private var currentNode: AccessibilityNodeInfo? = node
-
-            override fun run() {
-                if (index >= typingText.length || !isTyping) {
-                    isTyping = false
-                    currentNode?.recycle()
-                    currentNode = null
-                    Toast.makeText(this@TypingService, "✅ تمت الكتابة!", Toast.LENGTH_SHORT).show()
-                    return
-                }
-
-                try {
-                    // تحديث العقدة
-                    val fresh = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    if (fresh != null && fresh.isEditable) {
-                        currentNode?.recycle()
-                        currentNode = fresh
-                    } else fresh?.recycle()
-
-                    // كتابة النص حتى الآن
-                    val textSoFar = typingText.substring(0, index + 1)
-                    val args = Bundle().apply {
-                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textSoFar)
-                    }
-                    currentNode?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-
-                    index++
-                    handler.postDelayed(this, 80)
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "SET_TEXT error", e)
-                    isTyping = false
-                    currentNode?.recycle()
-                    currentNode = null
-                    Toast.makeText(this@TypingService, "❌ فشل: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
+        if (keyRect != null) {
+            // 3. تم العثور على الحرف → نضغط على منتصفه
+            Log.d(TAG, "✅ تم التقاط '$targetChar' في ${keyRect.toShortString()}")
+            clickAtPosition(keyRect.centerX().toFloat(), keyRect.centerY().toFloat())
+        } else {
+            Log.e(TAG, "❌ لم يتم العثور على '$targetChar' في لوحة المفاتيح")
         }
-        handler.post(runnable)
+
+        imeRootNode.recycle()
     }
 
-    // ==================== البحث المتقدم عن مربع النص ====================
-
-    private fun findBestTextNode(): AccessibilityNodeInfo? {
-        // 1. البحث عن المربع الم聚焦
-        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (focused != null && focused.isEditable) return focused
-        focused?.recycle()
-
-        // 2. البحث في شجرة الواجهة بالكامل
-        val found = searchForEditable(rootInActiveWindow)
-        if (found != null) return found
-
-        // 3. البحث في كل النوافذ المفتوحة (مش بس النشطة)
-        try {
-            for (window in windows) {
-                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
-                    val root = window.root
-                    val result = searchForEditable(root)
-                    if (result != null) { root?.recycle(); return result }
-                    root?.recycle()
-                }
-            }
-        } catch (e: Exception) { Log.e(TAG, "Window search error", e) }
-
-        return null
-    }
-
-    private fun searchForEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+    // دالة تتبع عكسي (Recursive) للبحث عن الحرف في كل أزرار الكيبورد
+    // المفتاح السحري: استخدام contentDescription لأن Gboard بيحط الحروف فيه
+    private fun searchForCharNode(node: AccessibilityNodeInfo?, targetChar: String): Rect? {
         if (node == null) return null
-        if (node.isEditable && node.isEnabled && node.isVisibleToUser) return node
-        if (node.className?.toString()?.contains("EditText") == true
-            && node.isEnabled && node.isVisibleToUser) return node
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            val result = searchForEditable(child)
-            if (result != null) { child?.recycle(); return result }
-            child?.recycle()
+
+        val contentDesc = node.contentDescription?.toString()?.lowercase()
+        val text = node.text?.toString()?.lowercase()
+
+        // مطابقة الحرف: Gboard بيحط الحرف غالباً في contentDescription
+        if ((contentDesc != null && contentDesc.contains(targetChar)) ||
+            (text != null && text.contains(targetChar))) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            // نتأكد إن الزرار له حجم فعلي
+            if (rect.width() > 0 && rect.height() > 0) {
+                return rect
+            }
         }
+
+        // البحث في العناصر الفرعية
+        for (i in 0 until node.childCount) {
+            val childNode = node.getChild(i)
+            val result = searchForCharNode(childNode, targetChar)
+            if (result != null) {
+                childNode?.recycle()
+                return result
+            }
+            childNode?.recycle()
+        }
+
         return null
+    }
+
+    // النقر بإحداثيات محددة باستخدام dispatchGesture
+    private fun clickAtPosition(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 50)) // 50ms نقرة
+            .build()
+
+        dispatchGesture(gesture, null, null)
+    }
+
+    // ===================== دالة التشخيص: كشف أسماء الأزرار =====================
+    // استخدمها لو بعض الحروف مش بتتضغط — بتطبع كل الأزرار في Logcat
+
+    private fun printAllKeyboardKeys() {
+        try {
+            val imeRootNode = windows.find { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.root ?: return
+
+            fun traverseAndPrint(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                val desc = node.contentDescription?.toString()
+                val txt = node.text?.toString()
+
+                if (desc != null || txt != null) {
+                    Log.d("KeyboardKeys", "🔑 Text: '$txt' | ContentDesc: '$desc'")
+                }
+
+                for (i in 0 until node.childCount) {
+                    traverseAndPrint(node.getChild(i))
+                }
+            }
+
+            traverseAndPrint(imeRootNode)
+            imeRootNode.recycle()
+            Log.d("KeyboardKeys", "✅ تم فحص الكيبورد")
+        } catch (e: Exception) {
+            Log.e(TAG, "خطأ في فحص الكيبورد", e)
+        }
     }
 }
