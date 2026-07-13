@@ -15,7 +15,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -27,7 +26,6 @@ class TypingService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var isTyping = false
     private var typingText = ""
-    private var useDarkNotification = false
 
     companion object {
         const val CHANNEL_ID = "typing_service_channel"
@@ -39,21 +37,13 @@ class TypingService : AccessibilityService() {
         const val KEYCODE_DEL = 67
         const val KEYCODE_ENTER = 66
         const val KEYCODE_SPACE = 62
-        const val KEYCODE_SHIFT_LEFT = 59
-        const val KEYCODE_BACK = 4
     }
 
     override fun onCreate() {
         super.onCreate()
         ShizukuHelper.init(this)
-        loadDarkModePref()
         createNotificationChannel()
         showPersistentNotification()
-    }
-
-    private fun loadDarkModePref() {
-        useDarkNotification = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
-            .getBoolean("DARK_MODE", false)
     }
 
     private fun createNotificationChannel() {
@@ -79,7 +69,6 @@ class TypingService : AccessibilityService() {
 
         val shizukuStatus = if (ShizukuHelper.isAvailable()) "⚡ Shizuku" else "🔍 Accessibility"
 
-        // نستخدم priority عالية في الوضع العادي عشان الإشعار يفضل ظاهر
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("محاكاة الكتابة")
             .setContentText("اضغط لبدء الكتابة | $shizukuStatus")
@@ -90,7 +79,6 @@ class TypingService : AccessibilityService() {
             .build()
 
         try {
-            // Android 13+ لازم نستخدم notification بشكل مباشر
             if (Build.VERSION.SDK_INT >= 34) {
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                     .notify(NOTIFICATION_ID, notification)
@@ -110,7 +98,7 @@ class TypingService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // لا نحتاج معالجة الأحداث هنا — نستخدم onClick من الإشعار
+        // لا نحتاج معالجة الأحداث — نستخدم onClick من الإشعار
     }
 
     override fun onInterrupt() {
@@ -119,7 +107,7 @@ class TypingService : AccessibilityService() {
     }
 
     // ===================================================================
-    //  المحرك الرئيسي — ثلاث استراتيجيات للكتابة
+    //  المحرك الرئيسي — استراتيجيتان للكتابة
     // ===================================================================
 
     private fun startTyping() {
@@ -153,8 +141,6 @@ class TypingService : AccessibilityService() {
 
     /**
      * Shizuku Direct Input — يكتب النص مباشرة على مستوى النظام
-     * ملاحظة: `input text` يدعم الأحرف اللاتينية والمسافات.
-     * للأحرف العربية قد لا يعمل على بعض الأجهزة.
      * إذا فشل حرف معيّن، ننتقل تلقائياً لاستراتيجية Accessibility.
      */
     private fun useShizukuTyping() {
@@ -173,33 +159,32 @@ class TypingService : AccessibilityService() {
             override fun run() {
                 if (index >= totalChars || !isTyping) {
                     isTyping = false
-                    Toast.makeText(this@TypingService,
-                        "✅ تمت كتابة $totalChars حرف!", Toast.LENGTH_SHORT).show()
+                    if (index >= totalChars) {
+                        Toast.makeText(this@TypingService,
+                            "✅ تمت كتابة $totalChars حرف!", Toast.LENGTH_SHORT).show()
+                    }
                     return
                 }
 
                 val char = typingText[index].toString()
 
                 // للأحرف الخاصة نستخدم keyevent
-                when (char) {
+                val success = when (char) {
                     "\n" -> ShizukuHelper.keyEvent(KEYCODE_ENTER)
                     " " -> ShizukuHelper.keyEvent(KEYCODE_SPACE)
-                    else -> {
-                        // محاولة كتابة الحرف عبر input text
-                        val success = ShizukuHelper.inputText(char)
-                        if (!success) {
-                            Log.w(TAG, "Shizuku فشل للحرف '$char' — ننتقل Accessibility")
-                            isTyping = false
-                            useAccessibilityTyping()
-                            return
-                        }
-                    }
+                    else -> ShizukuHelper.inputText(char)
                 }
 
-                index++
-                // تأخير بشري عشوائي بين الحروف
-                val delay = if (char == " " || char == "\n") 120..250 else 60..150
-                handler.postDelayed(this, delay.random().toLong())
+                if (success) {
+                    index++
+                    // تأخير بشري عشوائي بين الحروف
+                    val delay = if (char == " " || char == "\n") 120..250 else 60..150
+                    handler.postDelayed(this, delay.random().toLong())
+                } else {
+                    Log.w(TAG, "Shizuku فشل للحرف '$char' — ننتقل Accessibility")
+                    isTyping = false
+                    useAccessibilityTyping()
+                }
             }
         }
         handler.post(runnable)
@@ -211,8 +196,10 @@ class TypingService : AccessibilityService() {
      * Accessibility Keyboard Typing — يبحث عن الحرف في شجرة الكيبورد
      * ويستخدم dispatchGesture للنقر على إحداثياته
      */
-    @SuppressLint("RestrictedApi")
     private fun useAccessibilityTyping() {
+        // نطبع جميع أزرار الكيبورد في Logcat أولاً للتشخيص
+        printAllKeyboardKeys()
+
         isTyping = true
         Toast.makeText(this, "🔤 كتابة عبر الكيبورد...", Toast.LENGTH_SHORT).show()
 
@@ -227,7 +214,6 @@ class TypingService : AccessibilityService() {
             handler.postDelayed({
                 if (!isTyping) return@postDelayed
 
-                // محاولة النقر على الحرف
                 val found = findAndClickKey(currentChar)
                 if (found) {
                     successCount++
@@ -246,7 +232,7 @@ class TypingService : AccessibilityService() {
                 }
             }, currentDelay)
 
-            // تأخير بشري عشوائي 150-400ms
+            // تأخير بشري عشوائي 180-400ms
             delay += (180..400).random().toLong()
         }
 
@@ -287,7 +273,7 @@ class TypingService : AccessibilityService() {
             if (keyRect != null && keyRect.width() > 0 && keyRect.height() > 0) {
                 Log.d(TAG, "📍 '$targetChar' في ${keyRect.toShortString()}")
                 // تأخير قصير قبل النقر عشان الكيبورد يستقر
-                Thread.sleep(30)
+                try { Thread.sleep(30) } catch (_: InterruptedException) {}
                 clickAtPosition(keyRect.centerX().toFloat(), keyRect.centerY().toFloat())
                 imeRootNode.recycle()
                 true
@@ -309,20 +295,13 @@ class TypingService : AccessibilityService() {
     private fun searchForCharNode(node: AccessibilityNodeInfo?, targetChar: String): Rect? {
         if (node == null) return null
 
-        // محاولة قراءة النص من contentDescription أولاً (طريقة Gboard)
         val contentDesc = node.contentDescription?.toString()?.lowercase()?.trim()
-        var text = node.text?.toString()?.lowercase()?.trim()
-
-        // بعض أنواع الكيبورد تخزن الحرف في className
-        val className = node.className?.toString()?.lowercase()
-
+        val text = node.text?.toString()?.lowercase()?.trim()
         val nodeText = contentDesc ?: text
 
         if (nodeText != null && nodeText.isNotEmpty()) {
-            // تحقق إذا كان النص يطابق الحرف المطلوب
             val matches = nodeText == targetChar ||
                     nodeText.contains(targetChar) ||
-                    // بعض الكيبوردات تضيف بادئة/لاحقة
                     targetChar.contains(nodeText)
 
             if (matches) {
@@ -339,7 +318,7 @@ class TypingService : AccessibilityService() {
             val child = node.getChild(i)
             val result = searchForCharNode(child, targetChar)
             if (result != null) {
-                if (child != null) child.recycle()
+                child?.recycle()
                 return result
             }
             child?.recycle()
@@ -364,22 +343,6 @@ class TypingService : AccessibilityService() {
             Log.d(TAG, "👆 نقرة في ($x, $y)")
         } catch (e: Exception) {
             Log.e(TAG, "dispatchGesture فشل: ${e.message}")
-        }
-    }
-
-    /**
-     * ضغطة مطوّلة (Long Press) في إحداثية — لبعض الحالات الخاصة
-     */
-    private fun longPressAtPosition(x: Float, y: Float, durationMs: Long = 400) {
-        try {
-            val path = Path().apply { moveTo(x, y) }
-            val stroke = StrokeDescription(path, 0, durationMs)
-            val gesture = GestureDescription.Builder()
-                .addStroke(stroke)
-                .build()
-            dispatchGesture(gesture, null, null)
-        } catch (e: Exception) {
-            Log.e(TAG, "longPress فشل: ${e.message}")
         }
     }
 
@@ -422,93 +385,5 @@ class TypingService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "printAllKeyboardKeys خطأ: ${e.message}")
         }
-    }
-
-    /**
-     * استراتيجية بديلة: السحب (Swipe) على الكيبورد
-     * يمكن استخدامها كخيار إضافي
-     */
-    private fun useSwipeTyping() {
-        isTyping = true
-        Toast.makeText(this, "👆 كتابة بالسحب...", Toast.LENGTH_SHORT).show()
-
-        // حساب أبعاد الشاشة بناءً على rootInActiveWindow
-        val root = rootInActiveWindow ?: return
-        val displayRect = Rect()
-        root.getBoundsInScreen(displayRect)
-        val screenWidth = displayRect.width()
-        val screenHeight = displayRect.height()
-
-        // صفوف الكيبورد التقريبية (كل جهاز可能有 أبعاد مختلفة)
-        val row1Y = screenHeight * 0.78  // الصف العلوي
-        val row2Y = screenHeight * 0.85  // الصف الأوسط
-        val row3Y = screenHeight * 0.92  // الصف السفلي
-        val keyWidth = screenWidth / 10  // تقريباً 10 أزرار في كل صف
-
-        // توزيع الحروف على الأزرار (تقريبي)
-        val row1Chars = "qwertyuiop"
-        val row2Chars = "asdfghjkl"
-        val row3Chars = "zxcvbnm"
-
-        var delay = 0L
-
-        for (char in typingText.lowercase()) {
-            val currentDelay = delay
-            val currentChar = char.toString()
-
-            handler.postDelayed({
-                if (!isTyping) return@postDelayed
-
-                // حساب إحداثيات الحرف
-                var x = 0f
-                var y = 0f
-                var found = false
-
-                if (row1Chars.contains(char)) {
-                    x = keyWidth * row1Chars.indexOf(char) + keyWidth / 2
-                    y = row1Y.toFloat()
-                    found = true
-                } else if (row2Chars.contains(char)) {
-                    x = keyWidth * row2Chars.indexOf(char) + keyWidth / 2
-                    y = row2Y.toFloat()
-                    found = true
-                } else if (row3Chars.contains(char)) {
-                    x = keyWidth * row3Chars.indexOf(char) + keyWidth / 2
-                    y = row3Y.toFloat()
-                    found = true
-                }
-
-                if (found) {
-                    val path = Path().apply {
-                        moveTo(x, y)
-                        // حركة سريعة للداخل ثم الخارج (محاكاة النقر)
-                        lineTo(x, y)
-                    }
-                    val stroke = StrokeDescription(path, 0, 80)
-                    val gesture = GestureDescription.Builder()
-                        .addStroke(stroke).build()
-                    dispatchGesture(gesture, null, null)
-                } else {
-                    // الحرف مش موجود (مسافة, enter, etc)
-                    when (char) {
-                        ' ' -> {
-                            // النقر على منتصف المسافة
-                            val spaceX = screenWidth / 2f
-                            val spaceY = row3Y.toFloat() + keyWidth / 2
-                            val path = Path().apply { moveTo(spaceX, spaceY) }
-                            dispatchGesture(GestureDescription.Builder()
-                                .addStroke(StrokeDescription(path, 0, 80)).build(), null, null)
-                        }
-                    }
-                }
-            }, currentDelay)
-
-            delay += (200..400).random().toLong()
-        }
-
-        handler.postDelayed({
-            isTyping = false
-            Toast.makeText(this, "✅ تمت الكتابة بالسحب!", Toast.LENGTH_SHORT).show()
-        }, delay + 500)
     }
 }
