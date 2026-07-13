@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.TypingSimulator" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <style name="Theme.TypingSimulator" parent="Theme.AppCompat.NoActionBar">
         <item name="colorPrimary">#90CAF9</item>
         <item name="colorPrimaryDark">#42A5F5</item>
         <item name="colorAccent">#FF8A65</item>
-        <!-- خلفية غامقة -->
-        <item name="android:windowBackground">#FF121212</item>
-        <item name="android:colorBackground">#FF121212</item>
     </style>
 </resources>
