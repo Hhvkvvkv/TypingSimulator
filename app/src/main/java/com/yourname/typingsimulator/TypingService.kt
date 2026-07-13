@@ -29,7 +29,7 @@ class TypingService : AccessibilityService() {
         const val CHANNEL_ID = "typing_service_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_START_TYPING = "com.yourname.typingsimulator.START_TYPING"
-        const val TAG = "TypingSimulator"
+        const val TAG = "TypingService"
     }
 
     override fun onCreate() {
@@ -53,7 +53,7 @@ class TypingService : AccessibilityService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("محاكاة الكتابة")
-            .setContentText("اضغط لبدء الكتابة التلقائية")
+            .setContentText(if (ShizukuHelper.isAvailable()) "Shizuku ✅ | اضغط لبدء الكتابة" else "اضغط لبدء الكتابة التلقائية")
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent).setOngoing(true).build()
@@ -75,18 +75,70 @@ class TypingService : AccessibilityService() {
     // ===================== المحرك الرئيسي =====================
 
     private fun startTyping() {
-        if (isTyping) { Toast.makeText(this, "الكتابة جارية...", Toast.LENGTH_SHORT).show(); return }
+        if (isTyping) {
+            Toast.makeText(this, "الكتابة جارية...", Toast.LENGTH_SHORT).show()
+            return
+        }
 
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
         typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
-        if (typingText.isEmpty()) { Toast.makeText(this, "لا يوجد نص محفوظ", Toast.LENGTH_SHORT).show(); return }
+        if (typingText.isEmpty()) {
+            Toast.makeText(this, "لا يوجد نص محفوظ", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        // سكن للكيبورد: نطبع كل الأزرار في Logcat عشان نشوف أسماء الحروف
+        // === الطريقة 1: Shizuku input text (الأقوى) ===
+        if (ShizukuHelper.isAvailable()) {
+            useShizukuInput()
+            return
+        }
+
+        // === الطريقة 2: Accessibility keyboard scanning ===
+        useKeyboardScanning()
+    }
+
+    // ===================== الطريقة الأولى: Shizuku =====================
+
+    private fun useShizukuInput() {
+        isTyping = true
+        Toast.makeText(this, "📡 Shizuku جاهز! جاري الكتابة...", Toast.LENGTH_SHORT).show()
+
+        var index = 0
+        val totalChars = typingText.length
+
+        val runnable = object : Runnable {
+            override fun run() {
+                if (index >= totalChars || !isTyping) {
+                    isTyping = false
+                    Toast.makeText(this@TypingService, "✅ تمت الكتابة ($totalChars حرف)", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                val char = typingText[index].toString()
+                val success = ShizukuHelper.inputText(char)
+
+                if (success) {
+                    index++
+                    val delay = (100..200).random()
+                    handler.postDelayed(this, delay.toLong())
+                } else {
+                    Log.e(TAG, "Shizuku فشل في كتابة: $char، التحول للطريقة البديلة")
+                    isTyping = false
+                    useKeyboardScanning()
+                }
+            }
+        }
+        handler.post(runnable)
+    }
+
+    // ===================== الطريقة الثانية: Keyboard Scanning =====================
+
+    private fun useKeyboardScanning() {
+        Toast.makeText(this, "🔍 مسح الكيبورد...", Toast.LENGTH_SHORT).show()
         printAllKeyboardKeys()
 
         isTyping = true
         var delay = 0L
-        val baseDelay = (100..200).random() // تأخير عشوائي بشري
 
         for (char in typingText) {
             val charStr = char.toString()
@@ -97,118 +149,74 @@ class TypingService : AccessibilityService() {
                 findAndClickKey(charStr)
             }, currentDelay)
 
-            delay += baseDelay + (50..150).random() // بين 150 و 350 مللي
+            delay += (150..350).random().toLong()
         }
 
-        // رسالة النهاية
         handler.postDelayed({
             isTyping = false
             Toast.makeText(this, "✅ تمت الكتابة!", Toast.LENGTH_SHORT).show()
         }, delay + 500)
     }
 
-    // ===================== البحث عن الحرف والنقر =====================
-
     private fun findAndClickKey(targetChar: String) {
-        val allWindows = windows
-        var imeRootNode: AccessibilityNodeInfo? = null
+        try {
+            val imeRootNode = windows.find { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.root
+                ?: run { Log.e(TAG, "الكيبورد مش ظاهر"); return }
 
-        // 1. البحث عن نافذة لوحة المفاتيح (TYPE_INPUT_METHOD)
-        for (window in allWindows) {
-            if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
-                imeRootNode = window.root
-                break
+            val keyRect = searchForCharNode(imeRootNode, targetChar.lowercase())
+
+            if (keyRect != null) {
+                clickAtPosition(keyRect.centerX().toFloat(), keyRect.centerY().toFloat())
+                Log.d(TAG, "✅ '$targetChar' -> (${keyRect.centerX()}, ${keyRect.centerY()})")
+            } else {
+                Log.e(TAG, "❌ الحرف '$targetChar' مش موجود في الكيبورد")
             }
+
+            imeRootNode.recycle()
+        } catch (e: Exception) {
+            Log.e(TAG, "Keyboard scan error", e)
         }
-
-        if (imeRootNode == null) {
-            Log.e(TAG, "لوحة المفاتيح غير ظاهرة!")
-            return
-        }
-
-        // 2. البحث عن الحرف داخل شجرة الكيبورد
-        val keyRect = searchForCharNode(imeRootNode, targetChar.lowercase())
-
-        if (keyRect != null) {
-            // 3. تم العثور على الحرف → نضغط على منتصفه
-            Log.d(TAG, "✅ تم التقاط '$targetChar' في ${keyRect.toShortString()}")
-            clickAtPosition(keyRect.centerX().toFloat(), keyRect.centerY().toFloat())
-        } else {
-            Log.e(TAG, "❌ لم يتم العثور على '$targetChar' في لوحة المفاتيح")
-        }
-
-        imeRootNode.recycle()
     }
 
-    // دالة تتبع عكسي (Recursive) للبحث عن الحرف في كل أزرار الكيبورد
-    // المفتاح السحري: استخدام contentDescription لأن Gboard بيحط الحروف فيه
     private fun searchForCharNode(node: AccessibilityNodeInfo?, targetChar: String): Rect? {
         if (node == null) return null
-
         val contentDesc = node.contentDescription?.toString()?.lowercase()
         val text = node.text?.toString()?.lowercase()
-
-        // مطابقة الحرف: Gboard بيحط الحرف غالباً في contentDescription
         if ((contentDesc != null && contentDesc.contains(targetChar)) ||
             (text != null && text.contains(targetChar))) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
-            // نتأكد إن الزرار له حجم فعلي
-            if (rect.width() > 0 && rect.height() > 0) {
-                return rect
-            }
+            if (rect.width() > 0 && rect.height() > 0) return rect
         }
-
-        // البحث في العناصر الفرعية
         for (i in 0 until node.childCount) {
             val childNode = node.getChild(i)
             val result = searchForCharNode(childNode, targetChar)
-            if (result != null) {
-                childNode?.recycle()
-                return result
-            }
+            if (result != null) { childNode?.recycle(); return result }
             childNode?.recycle()
         }
-
         return null
     }
 
-    // النقر بإحداثيات محددة باستخدام dispatchGesture
     private fun clickAtPosition(x: Float, y: Float) {
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 50)) // 50ms نقرة
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
             .build()
-
         dispatchGesture(gesture, null, null)
     }
-
-    // ===================== دالة التشخيص: كشف أسماء الأزرار =====================
-    // استخدمها لو بعض الحروف مش بتتضغط — بتطبع كل الأزرار في Logcat
 
     private fun printAllKeyboardKeys() {
         try {
             val imeRootNode = windows.find { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.root ?: return
-
-            fun traverseAndPrint(node: AccessibilityNodeInfo?) {
+            fun traverse(node: AccessibilityNodeInfo?) {
                 if (node == null) return
                 val desc = node.contentDescription?.toString()
                 val txt = node.text?.toString()
-
-                if (desc != null || txt != null) {
-                    Log.d("KeyboardKeys", "🔑 Text: '$txt' | ContentDesc: '$desc'")
-                }
-
-                for (i in 0 until node.childCount) {
-                    traverseAndPrint(node.getChild(i))
-                }
+                if (desc != null || txt != null) Log.d("KeyboardKeys", "🔑 Text: '$txt' | ContentDesc: '$desc'")
+                for (i in 0 until node.childCount) traverse(node.getChild(i))
             }
-
-            traverseAndPrint(imeRootNode)
+            traverse(imeRootNode)
             imeRootNode.recycle()
-            Log.d("KeyboardKeys", "✅ تم فحص الكيبورد")
-        } catch (e: Exception) {
-            Log.e(TAG, "خطأ في فحص الكيبورد", e)
-        }
+        } catch (e: Exception) { Log.e(TAG, "Print error", e) }
     }
 }

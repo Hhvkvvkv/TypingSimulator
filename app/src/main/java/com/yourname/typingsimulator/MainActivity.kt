@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
@@ -38,5 +39,12 @@ class MainActivity : AppCompatActivity() {
             startActivity(intent)
             Toast.makeText(this, "فعّل خدمة ${getString(R.string.app_name)} من الإعدادات", Toast.LENGTH_LONG).show()
         }
+
+        // طلب صلاحية Shizuku (اختياري)
+        ShizukuHelper.requestPermission()
+
+        // عرض حالة Shizuku
+        val shizukuStatus = if (ShizukuHelper.isAvailable()) "✅ Shizuku متاح" else "ℹ️ Shizuku غير متاح (اختياري)"
+        Toast.makeText(this, shizukuStatus, Toast.LENGTH_LONG).show()
     }
 }
