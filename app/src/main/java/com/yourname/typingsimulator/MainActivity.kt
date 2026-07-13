@@ -20,7 +20,6 @@ class MainActivity : AppCompatActivity() {
         val btnSave = findViewById<Button>(R.id.btnSave)
         val btnEnableAccessibility = findViewById<Button>(R.id.btnEnableAccessibility)
 
-        // جلب النص المحفوظ مسبقاً
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
         etTargetText.setText(sharedPref.getString("TEXT_TO_TYPE", "") ?: "")
 
@@ -35,16 +34,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnEnableAccessibility.setOnClickListener {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            startActivity(intent)
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             Toast.makeText(this, "فعّل خدمة ${getString(R.string.app_name)} من الإعدادات", Toast.LENGTH_LONG).show()
         }
 
-        // طلب صلاحية Shizuku (اختياري)
-        ShizukuHelper.requestPermission()
-
-        // عرض حالة Shizuku
-        val shizukuStatus = if (ShizukuHelper.isAvailable()) "✅ Shizuku متاح" else "ℹ️ Shizuku غير متاح (اختياري)"
-        Toast.makeText(this, shizukuStatus, Toast.LENGTH_LONG).show()
+        // تهيئة Shizuku (اختياري - لو مش موجود بيشتغل عادي)
+        ShizukuHelper.init(this)
+        if (ShizukuHelper.isAvailable()) {
+            ShizukuHelper.requestPermission()
+            Toast.makeText(this, "✅ Shizuku جاهز للكتابة المباشرة!", Toast.LENGTH_LONG).show()
+        }
     }
 }

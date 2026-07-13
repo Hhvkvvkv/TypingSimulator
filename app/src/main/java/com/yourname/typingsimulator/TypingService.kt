@@ -34,6 +34,8 @@ class TypingService : AccessibilityService() {
 
     override fun onCreate() {
         super.onCreate()
+        // تهيئة Shizoku
+        ShizukuHelper.init(this)
         createNotificationChannel()
         showPersistentNotification()
     }
@@ -51,9 +53,10 @@ class TypingService : AccessibilityService() {
         val startIntent = Intent(this, TypingService::class.java).apply { action = ACTION_START_TYPING }
         val pendingIntent = PendingIntent.getService(this, 0, startIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val shizokuStatus = if (ShizukuHelper.isAvailable()) "✅ Shizuku" else "ℹ️ عادي"
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("محاكاة الكتابة")
-            .setContentText(if (ShizukuHelper.isAvailable()) "Shizuku ✅ | اضغط لبدء الكتابة" else "اضغط لبدء الكتابة التلقائية")
+            .setContentText("$shizokuStatus | اضغط لبدء الكتابة")
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent).setOngoing(true).build()
@@ -75,33 +78,27 @@ class TypingService : AccessibilityService() {
     // ===================== المحرك الرئيسي =====================
 
     private fun startTyping() {
-        if (isTyping) {
-            Toast.makeText(this, "الكتابة جارية...", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (isTyping) { Toast.makeText(this, "الكتابة جارية...", Toast.LENGTH_SHORT).show(); return }
 
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
         typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
-        if (typingText.isEmpty()) {
-            Toast.makeText(this, "لا يوجد نص محفوظ", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (typingText.isEmpty()) { Toast.makeText(this, "لا يوجد نص محفوظ", Toast.LENGTH_SHORT).show(); return }
 
-        // === الطريقة 1: Shizuku input text (الأقوى) ===
+        // === الطريقة 1: Shizuku Direct Input (الأمتن) ===
         if (ShizukuHelper.isAvailable()) {
-            useShizukuInput()
+            useShizukuTyping()
             return
         }
 
-        // === الطريقة 2: Accessibility keyboard scanning ===
+        // === الطريقة 2: Accessibility Keyboard Scanning ===
         useKeyboardScanning()
     }
 
-    // ===================== الطريقة الأولى: Shizuku =====================
+    // ===================== الطريقة 1: Shizuku =====================
 
-    private fun useShizukuInput() {
+    private fun useShizukuTyping() {
         isTyping = true
-        Toast.makeText(this, "📡 Shizuku جاهز! جاري الكتابة...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "⚡ Shizuku: كتابة مباشرة...", Toast.LENGTH_SHORT).show()
 
         var index = 0
         val totalChars = typingText.length
@@ -110,20 +107,18 @@ class TypingService : AccessibilityService() {
             override fun run() {
                 if (index >= totalChars || !isTyping) {
                     isTyping = false
-                    Toast.makeText(this@TypingService, "✅ تمت الكتابة ($totalChars حرف)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@TypingService, "✅ تمت كتابة $totalChars حرف!", Toast.LENGTH_SHORT).show()
                     return
                 }
 
                 val char = typingText[index].toString()
-                val success = ShizukuHelper.inputText(char)
-
-                if (success) {
+                if (ShizukuHelper.inputText(char)) {
                     index++
-                    val delay = (100..200).random()
-                    handler.postDelayed(this, delay.toLong())
+                    handler.postDelayed(this, (80..150).random().toLong())
                 } else {
-                    Log.e(TAG, "Shizuku فشل في كتابة: $char، التحول للطريقة البديلة")
+                    Log.e(TAG, "Shizuku فشل في: '$char'")
                     isTyping = false
+                    Toast.makeText(this@TypingService, "⚠️ Shizuku فشل، استخدم Accessibility", Toast.LENGTH_SHORT).show()
                     useKeyboardScanning()
                 }
             }
@@ -131,24 +126,21 @@ class TypingService : AccessibilityService() {
         handler.post(runnable)
     }
 
-    // ===================== الطريقة الثانية: Keyboard Scanning =====================
+    // ===================== الطريقة 2: Accessibility Keyboard =====================
 
     private fun useKeyboardScanning() {
-        Toast.makeText(this, "🔍 مسح الكيبورد...", Toast.LENGTH_SHORT).show()
         printAllKeyboardKeys()
+        Toast.makeText(this, "🔍 مسح الكيبورد...", Toast.LENGTH_SHORT).show()
 
         isTyping = true
         var delay = 0L
 
         for (char in typingText) {
-            val charStr = char.toString()
             val currentDelay = delay
-
             handler.postDelayed({
                 if (!isTyping) return@postDelayed
-                findAndClickKey(charStr)
+                findAndClickKey(char.toString())
             }, currentDelay)
-
             delay += (150..350).random().toLong()
         }
 
@@ -160,22 +152,16 @@ class TypingService : AccessibilityService() {
 
     private fun findAndClickKey(targetChar: String) {
         try {
-            val imeRootNode = windows.find { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.root
-                ?: run { Log.e(TAG, "الكيبورد مش ظاهر"); return }
-
+            val imeRootNode = windows.find { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.root ?: return
             val keyRect = searchForCharNode(imeRootNode, targetChar.lowercase())
 
             if (keyRect != null) {
                 clickAtPosition(keyRect.centerX().toFloat(), keyRect.centerY().toFloat())
-                Log.d(TAG, "✅ '$targetChar' -> (${keyRect.centerX()}, ${keyRect.centerY()})")
             } else {
-                Log.e(TAG, "❌ الحرف '$targetChar' مش موجود في الكيبورد")
+                Log.e(TAG, "❌ '$targetChar' مش موجود")
             }
-
             imeRootNode.recycle()
-        } catch (e: Exception) {
-            Log.e(TAG, "Keyboard scan error", e)
-        }
+        } catch (e: Exception) { Log.e(TAG, "خطأ", e) }
     }
 
     private fun searchForCharNode(node: AccessibilityNodeInfo?, targetChar: String): Rect? {
@@ -199,10 +185,8 @@ class TypingService : AccessibilityService() {
 
     private fun clickAtPosition(x: Float, y: Float) {
         val path = Path().apply { moveTo(x, y) }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
-            .build()
-        dispatchGesture(gesture, null, null)
+        dispatchGesture(GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 50)).build(), null, null)
     }
 
     private fun printAllKeyboardKeys() {
@@ -212,7 +196,7 @@ class TypingService : AccessibilityService() {
                 if (node == null) return
                 val desc = node.contentDescription?.toString()
                 val txt = node.text?.toString()
-                if (desc != null || txt != null) Log.d("KeyboardKeys", "🔑 Text: '$txt' | ContentDesc: '$desc'")
+                if (desc != null || txt != null) Log.d("KeyboardKeys", "🔑 '$txt' | '$desc'")
                 for (i in 0 until node.childCount) traverse(node.getChild(i))
             }
             traverse(imeRootNode)
