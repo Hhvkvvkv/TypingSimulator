@@ -98,16 +98,6 @@ class TypingService : AccessibilityService() {
         }
     }
 
-    // ✅ زر إمكانية الوصول (Accessibility Button) — يبدأ الكتابة مباشرة
-    @SuppressLint("NewApi")
-    override fun onAccessibilityButtonClicked(displayId: Int) {
-        try {
-            handler.postDelayed({ startTyping() }, 600)
-        } catch (e: Throwable) {
-            Log.e(TAG, "onAccessibilityButtonClicked خطأ: ${e.message}")
-        }
-    }
-
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {
         isTyping = false
