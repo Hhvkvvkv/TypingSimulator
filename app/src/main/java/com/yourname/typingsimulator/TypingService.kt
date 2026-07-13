@@ -180,7 +180,7 @@ class TypingService : AccessibilityService() {
             return true
         }
         // 2) الحساب الإحداثي (بديل)
-        val p = computeKeyPoint(targetChar)
+        val p = computeKeyPoint(targetChar.first())
         if (p != null) {
             Log.d(TAG, "📐 إحداثي لـ '$targetChar' = $p")
             clickAtPosition(p.x.toFloat(), p.y.toFloat())
@@ -307,10 +307,10 @@ class TypingService : AccessibilityService() {
         } catch (e: Throwable) { null }
     }
 
-    private fun computeKeyPoint(char: Char): Point? {
+    private fun computeKeyPoint(rawChar: Char): Point? {
         val rect = getKeyboardRect() ?: return null
-        val lower = char.lowercaseChar()
-        val isArabic = char in '\u0600'..'\u06FF'
+        val lower = rawChar.lowercaseChar()
+        val isArabic = rawChar in '\u0600'..'\u06FF'
         val layout = if (isArabic) ARABIC else QWERTY
         for ((rowIdx, row) in layout.withIndex()) {
             val col = row.indexOf(lower)
