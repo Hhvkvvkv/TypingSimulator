@@ -100,26 +100,6 @@ class TypingService : AccessibilityService() {
     // ✅ زر إمكانية الوصول — ضغطة = تشغيل/إيقاف الكتابة
     // توقيع API 33+ (displayId: Int): Boolean — شغال على أندرويد 14
     @Suppress("DEPRECATION")
-    override fun onAccessibilityButtonClicked(displayId: Int): Boolean {
-        try {
-            if (isTyping) {
-                isTyping = false
-                handler.removeCallbacksAndMessages(null)
-                handler.postDelayed({ lastTypingEndTime = System.currentTimeMillis() }, 100)
-                EventLog.info(this, "إيقاف الكتابة من زر الوصول")
-                showToast("🛑 تم إيقاف الكتابة")
-            } else {
-                EventLog.info(this, "تشغيل الكتابة من زر إمكانية الوصول")
-                showToast("تم التفعيل ✅")
-                handler.postDelayed({ startTyping() }, 700)
-            }
-            return true
-        } catch (e: Throwable) {
-            Log.e(TAG, "زر الوصول خطأ: ${e.message}")
-            return false
-        }
-    }
-
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {
