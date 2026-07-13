@@ -10,4 +10,5 @@
     <string name="no_text">لا يوجد نص محفوظ لمحاكاته</string>
     <string name="typing_in_progress">الكتابة جارية بالفعل...</string>
     <string name="tap_text_field">الرجاء الضغط على مربع نص (مربع دردشة) أولاً</string>
+    <string name="dark_mode">🌙 الوضع الليلي</string>
 </resources>

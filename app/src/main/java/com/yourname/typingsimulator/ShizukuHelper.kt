@@ -1,43 +1,41 @@
 package com.yourname.typingsimulator
 
 import android.util.Log
-import moe.shizuku.server.IRemoteProcess
-import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuProvider
 
 /**
- * محرك Shizuku للكتابة المباشرة على مستوى النظام
- * يستخدم newProcess من IShizukuService لتنفيذ أوامر input text
+ * Shizuku helper — تستخدم API Shizuku الحديث لتنفيذ أوامر على مستوى النظام
+ * لا تحتاج AIDL يدوي، Shizuku.newProcess() متاح مباشرة من dev.rikka.shizuku:api
  */
 object ShizukuHelper {
 
     const val TAG = "ShizukuHelper"
     const val PERMISSION_REQUEST_CODE = 1001
 
-    private var _service: IShizukuService? = null
+    @Volatile
     private var _available = false
+
+    @Volatile
+    private var _version = 0
 
     fun isAvailable(): Boolean = _available
 
+    fun getVersion(): Int = _version
+
     /**
-     * تهيئة الاتصال بـ Shizuku
+     * تهيئة Shizuku — آمنة تماماً، مش بتعمل كراش لو Shizuku مش مثبت
      */
     fun init(context: android.content.Context) {
         try {
-            // طلب Binder من Shizuku
-            ShizukuProvider.requestBinderForNonProviderProcess(context)
-            
             if (Shizuku.pingBinder()) {
-                val binder = Shizuku.getBinder()
-                if (binder != null) {
-                    _service = IShizukuService.Stub.asInterface(binder)
-                    _available = true
-                    Log.d(TAG, "✅ Shizuku connected! API v${Shizuku.getVersion()}")
-                }
+                _version = Shizuku.getVersion()
+                _available = true
+                Log.d(TAG, "✅ Shizuku متصل! API v$_version")
+            } else {
+                Log.d(TAG, "ℹ️ Shizuku غير متاح (pingBinder فشل)")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Shizuku init error", e)
+            Log.w(TAG, "Shizuku init فشل (غير مثبت؟): ${e.message}")
             _available = false
         }
     }
@@ -51,73 +49,120 @@ object ShizukuHelper {
                 Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Permission request error", e)
+            Log.e(TAG, "طلب الصلاحية فشل: ${e.message}")
         }
     }
 
     /**
-     * كتابة نص مباشرةً باستخدام input text على مستوى النظام
-     * هذه أسرع وأمتن طريقة للكتابة
+     * كتابة نص مباشرةً على مستوى النظام
      */
     fun inputText(text: String): Boolean {
-        val service = _service ?: return false
+        if (!_available) {
+            Log.e(TAG, "Shizuku غير متاح")
+            return false
+        }
         return try {
-            val process = service.newProcess(
+            val process = Shizuku.newProcess(
                 arrayOf("/system/bin/input", "text", text),
                 null, null
             )
             val exitCode = process.waitFor()
             process.destroy()
-            
-            if (exitCode == 0) {
-                Log.d(TAG, "✅ input text: '$text'")
-                true
-            } else {
-                Log.e(TAG, "❌ input text failed: exit=$exitCode")
-                false
-            }
+            Log.d(TAG, "inputText('$text') → exit $exitCode")
+            exitCode == 0
         } catch (e: Exception) {
-            Log.e(TAG, "input text exception", e)
+            Log.e(TAG, "inputText استثناء: ${e.message}")
             false
         }
     }
 
     /**
-     * النقر على إحداثيات معينة في الشاشة
-     * لمحاكاة النقر على أزرار الكيبورد
+     * النقر على إحداثيات (x, y)
      */
     fun tap(x: Int, y: Int): Boolean {
-        val service = _service ?: return false
+        if (!_available) return false
         return try {
-            val process = service.newProcess(
+            val process = Shizuku.newProcess(
                 arrayOf("/system/bin/input", "tap", x.toString(), y.toString()),
                 null, null
             )
             val exitCode = process.waitFor()
             process.destroy()
+            Log.d(TAG, "tap($x, $y) → exit $exitCode")
             exitCode == 0
         } catch (e: Exception) {
-            Log.e(TAG, "tap exception", e)
+            Log.e(TAG, "tap استثناء: ${e.message}")
             false
         }
     }
 
     /**
-     * كتابة نص حرفاً حرفاً مع تأخير بشري
+     * إرسال keyevent (مثل KEYCODE_DEL=67, KEYCODE_ENTER=66, KEYCODE_SPACE=62)
      */
-    fun typeTextCharacterByCharacter(text: String, onCharTyped: ((Int) -> Unit)? = null): Boolean {
-        var allSuccess = true
-        for (i in text.indices) {
-            val char = text[i].toString()
-            if (!inputText(char)) {
-                allSuccess = false
-                break
-            }
-            onCharTyped?.invoke(i)
-            try {
-                Thread.sleep((80..150).random().toLong())
-            } catch (_: InterruptedException) {}
+    fun keyEvent(keyCode: Int): Boolean {
+        if (!_available) return false
+        return try {
+            val process = Shizuku.newProcess(
+                arrayOf("/system/bin/input", "keyevent", keyCode.toString()),
+                null, null
+            )
+            val exitCode = process.waitFor()
+            process.destroy()
+            Log.d(TAG, "keyevent($keyCode) → exit $exitCode")
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.e(TAG, "keyevent استثناء: ${e.message}")
+            false
         }
-        return allSuccess
+    }
+
+    /**
+     * تمرير/swipe من نقطة لأخرى (محاكاة السحب على الكيبورد)
+     */
+    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 100): Boolean {
+        if (!_available) return false
+        return try {
+            val process = Shizuku.newProcess(
+                arrayOf("/system/bin/input", "swipe",
+                    x1.toString(), y1.toString(),
+                    x2.toString(), y2.toString(),
+                    durationMs.toString()),
+                null, null
+            )
+            val exitCode = process.waitFor()
+            process.destroy()
+            Log.d(TAG, "swipe($x1,$y1→$x2,$y2,$durationMs) → exit $exitCode")
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.e(TAG, "swipe استثناء: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * كتابة نص حرفاً حرفاً عبر input text — ينفع للأحرف اللاتينية
+     */
+    fun inputTextLetterByLetter(text: String, onCharTyped: ((Int) -> Unit)? = null): Boolean {
+        if (!_available) return false
+        return try {
+            for ((i, char) in text.withIndex()) {
+                val process = Shizuku.newProcess(
+                    arrayOf("/system/bin/input", "text", char.toString()),
+                    null, null
+                )
+                val exitCode = process.waitFor()
+                process.destroy()
+                if (exitCode != 0) {
+                    Log.e(TAG, "inputText فشل للحرف '$char' في index $i")
+                    return false
+                }
+                onCharTyped?.invoke(i)
+                Thread.sleep((50..100).random().toLong())
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "inputTextLetterByLetter استثناء: ${e.message}")
+            false
+        }
     }
 }
