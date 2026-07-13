@@ -1,8 +1,8 @@
 package com.yourname.typingsimulator
 
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
+import android.content.Intent
 import android.provider.Settings
 import android.util.Log
 import android.widget.Button
@@ -54,6 +54,11 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 Toast.makeText(this, "فعّل خدمة ${getString(R.string.app_name)} من الإعدادات",
                     Toast.LENGTH_LONG).show()
+            }
+
+            val btnOpenLog = findViewById<Button>(R.id.btnOpenLog)
+            btnOpenLog.setOnClickListener {
+                startActivity(Intent(this, LogActivity::class.java))
             }
         } catch (e: Throwable) {
             Log.e("MainActivity", "خطأ: ${e.message}")

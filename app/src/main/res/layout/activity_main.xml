@@ -12,7 +12,7 @@
         android:text="@string/app_title"
         android:textSize="24sp"
         android:textStyle="bold"
-        android:layout_marginBottom="32dp"/>
+        android:layout_marginBottom="24dp"/>
 
     <EditText
         android:id="@+id/etTargetText"
@@ -30,7 +30,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="@string/btn_save"
-        android:layout_marginBottom="16dp"/>
+        android:layout_marginBottom="12dp"/>
 
     <Button
         android:id="@+id/btnEnableAccessibility"
@@ -38,6 +38,13 @@
         android:layout_height="wrap_content"
         android:text="@string/btn_accessibility"
         android:backgroundTint="#FF5722"
+        android:layout_marginBottom="12dp"/>
+
+    <Button
+        android:id="@+id/btnOpenLog"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_view_log"
         android:layout_marginBottom="24dp"/>
 
     <LinearLayout

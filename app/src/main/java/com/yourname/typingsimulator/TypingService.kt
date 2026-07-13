@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.accessibilityservice.GestureDescription.StrokeDescription
 import android.annotation.SuppressLint
-import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -58,17 +57,13 @@ class TypingService : AccessibilityService() {
                 ).apply { description = "إشعار خدمة محاكاة الكتابة" }
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                     .createNotificationChannel(channel)
-            } catch (e: Throwable) {
-                Log.e(TAG, "createNotificationChannel خطأ: ${e.message}")
-            }
+            } catch (e: Throwable) { Log.e(TAG, "createNotificationChannel خطأ: ${e.message}") }
         }
     }
 
     private fun showPersistentNotification() {
         try {
-            val startIntent = Intent(this, TypingService::class.java).apply {
-                action = ACTION_START_TYPING
-            }
+            val startIntent = Intent(this, TypingService::class.java).apply { action = ACTION_START_TYPING }
             val pendingIntent = PendingIntent.getService(
                 this, 0, startIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -83,9 +78,7 @@ class TypingService : AccessibilityService() {
                 .build()
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(NOTIFICATION_ID, notification)
-        } catch (e: Throwable) {
-            Log.e(TAG, "showPersistentNotification خطأ: ${e.message}")
-        }
+        } catch (e: Throwable) { Log.e(TAG, "showPersistentNotification خطأ: ${e.message}") }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -93,14 +86,10 @@ class TypingService : AccessibilityService() {
             if (intent?.action == ACTION_START_TYPING) {
                 handler.postDelayed({ startTyping() }, 700)
             }
-        } catch (e: Throwable) {
-            Log.e(TAG, "onStartCommand خطأ: ${e.message}")
-        }
+        } catch (e: Throwable) { Log.e(TAG, "onStartCommand خطأ: ${e.message}") }
         return try {
             super.onStartCommand(intent, flags, startId)
-        } catch (e: Throwable) {
-            START_STICKY
-        }
+        } catch (e: Throwable) { START_STICKY }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -120,26 +109,30 @@ class TypingService : AccessibilityService() {
         typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
         if (typingText.isEmpty()) {
             showToast("لا يوجد نص محفوظ — افتح التطبيق واحفظ نصاً")
+            EventLog.warn(this, "بدء الكتابة: لا يوجد نص محفوظ")
             return
         }
 
-        // ===== تشخيص مرئي =====
         val kbRect = getKeyboardRect()
-        val wTypes = try {
-            windows.map { it.type }.joinToString(",")
-        } catch (e: Throwable) { "ERR" }
+        val wTypes = try { windows.map { it.type }.joinToString(",") } catch (e: Throwable) { "ERR" }
         val sr = isScreenReaderActive()
+
+        // تسجيل التشخيص
+        EventLog.info(this, "=== بدء الكتابة: ${typingText.length} حرف ===")
+        EventLog.info(this, "الكيبورد مكتشف: ${if (kbRect != null) "نعم $kbRect" else "لا"}")
+        EventLog.info(this, "أنواع النوافذ: [$wTypes]")
+        EventLog.info(this, "قارئ شاشة مُفعّل: ${if (sr) "نعم" else "لا"}")
+
         val diag = "🔎 كيبورد: ${if (kbRect != null) "نعم" else "لا"} | نوافذ: [$wTypes] | قارئ شاشة: ${if (sr) "نعم" else "لا"}"
         Log.d(TAG, diag)
         showToast(diag, Toast.LENGTH_LONG)
 
         if (kbRect == null) {
             showToast("⌨️ افتح لوحة المفاتيح في تطبيق الدردشة أولاً", Toast.LENGTH_LONG)
+            EventLog.error(this, "الكيبورد غير مكتشف — لم تبدأ الكتابة")
             return
         }
 
-        Log.d(TAG, "بدء الكتابة: ${typingText.length} حرف | الكيبورد: $kbRect")
-        showToast("🔤 بدء الكتابة...", Toast.LENGTH_SHORT)
         printAllKeyboardKeys()
         useKeyboardTyping()
     }
@@ -148,8 +141,6 @@ class TypingService : AccessibilityService() {
     private fun useKeyboardTyping() {
         isTyping = true
         var delay = 0L
-        var successCount = 0
-        var failCount = 0
         for (char in typingText) {
             val currentDelay = delay
             val currentChar = char.toString()
@@ -157,9 +148,13 @@ class TypingService : AccessibilityService() {
                 try {
                     if (!isTyping) return@postDelayed
                     val found = tapChar(currentChar)
-                    if (found) successCount++ else failCount++
+                    if (found) {
+                        EventLog.ok(this, "✓ الحرف '$currentChar' → نُقر بنجاح")
+                    } else {
+                        EventLog.warn(this, "✗ الحرف '$currentChar' → لم يُعثر عليه / فشل النقر")
+                    }
                 } catch (e: Throwable) {
-                    Log.e(TAG, "loop خطأ: ${e.message}")
+                    EventLog.error(this, "خطأ أثناء '$currentChar': ${e.message}")
                 }
             }, currentDelay)
             delay += (180..380).random().toLong()
@@ -167,32 +162,40 @@ class TypingService : AccessibilityService() {
         val totalDelay = delay + 1000
         handler.postDelayed({
             isTyping = false
-            showToast("✅ تمت الكتابة! (نجاح: $successCount, فشل: $failCount)", Toast.LENGTH_LONG)
+            EventLog.info(this, "=== انتهت الكتابة ===")
+            showToast("✅ انتهت الكتابة — راجع سجل الأخطاء", Toast.LENGTH_LONG)
         }, totalDelay)
     }
 
     private fun tapChar(targetChar: String): Boolean {
         if (targetChar == " " || targetChar == "\n") {
             val p = findSpecialPoint(targetChar)
-            if (p != null) { clickAtPosition(p.x.toFloat(), p.y.toFloat()); return true }
+            if (p != null) {
+                EventLog.info(this, "مسافة/إدخال: إحداثي $p")
+                clickAtPosition(p.x.toFloat(), p.y.toFloat())
+                return true
+            }
+            EventLog.warn(this, "لم يُعثر على زر المسافة/الإدخال")
             return false
         }
         val rect = scanForChar(targetChar)
         if (rect != null) {
+            EventLog.info(this, "'$targetChar' وُجد في الشجرة: $rect")
             clickAtPosition(rect.centerX().toFloat(), rect.centerY().toFloat())
             return true
         }
         val p = computeKeyPoint(targetChar.first())
         if (p != null) {
+            EventLog.info(this, "'$targetChar' إحداثي محسوب: $p")
             Log.d(TAG, "📐 إحداثي لـ '$targetChar' = $p")
             clickAtPosition(p.x.toFloat(), p.y.toFloat())
             return true
         }
-        Log.w(TAG, "🔍 '$targetChar' لم يوجد")
+        EventLog.warn(this, "'$targetChar' لم يُعثر عليه نهائياً")
         return false
     }
 
-    // ===== 1) البحث في شجرة الكيبورد (كل النوافذ + النافذة النشطة) =====
+    // ===== 1) البحث في شجرة الكيبورد =====
 
     private fun scanForChar(targetChar: String): Rect? {
         return try {
@@ -205,16 +208,14 @@ class TypingService : AccessibilityService() {
             }
             null
         } catch (e: Throwable) {
-            Log.e(TAG, "scanForChar خطأ: ${e.message}")
+            EventLog.error(this, "scanForChar خطأ: ${e.message}")
             null
         }
     }
 
     private fun getAllRoots(): List<AccessibilityNodeInfo?> {
         val list = mutableListOf<AccessibilityNodeInfo?>()
-        try {
-            for (w in windows) list.add(w.root)
-        } catch (_: Throwable) {}
+        try { for (w in windows) list.add(w.root) } catch (_: Throwable) {}
         try { list.add(rootInActiveWindow) } catch (_: Throwable) {}
         return list.filterNotNull().distinctBy { System.identityHashCode(it) }
     }
@@ -226,9 +227,7 @@ class TypingService : AccessibilityService() {
             val text = node.text?.toString()?.lowercase()?.trim()
             val nodeText = contentDesc ?: text
             if (nodeText != null && nodeText.isNotEmpty()) {
-                val matches = nodeText == targetChar ||
-                        nodeText.contains(targetChar) ||
-                        targetChar.contains(nodeText)
+                val matches = nodeText == targetChar || nodeText.contains(targetChar) || targetChar.contains(nodeText)
                 if (matches) {
                     val rect = Rect()
                     node.getBoundsInScreen(rect)
@@ -238,10 +237,7 @@ class TypingService : AccessibilityService() {
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 val result = searchForCharNode(child, targetChar)
-                if (result != null) {
-                    child?.recycle()
-                    return result
-                }
+                if (result != null) { child?.recycle(); return result }
                 child?.recycle()
             }
             null
@@ -278,17 +274,14 @@ class TypingService : AccessibilityService() {
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 val result = searchSpecial(child, keywords)
-                if (result != null) {
-                    child?.recycle()
-                    return result
-                }
+                if (result != null) { child?.recycle(); return result }
                 child?.recycle()
             }
             null
         } catch (e: Throwable) { null }
     }
 
-    // ===== 2) الحساب الإحداثي (بديل) =====
+    // ===== 2) الحساب الإحداثي =====
 
     private fun getKeyboardRect(): Rect? {
         return try {
@@ -312,7 +305,6 @@ class TypingService : AccessibilityService() {
         for ((rowIdx, row) in layout.withIndex()) {
             val col = row.indexOf(lower)
             if (col >= 0) {
-                // 5 صفوف تقديرية: أرقام + 3 حروف + مسافة
                 val bands = 5
                 val bandH = rect.height() / bands
                 val y = rect.top + bandH * (rowIdx + 1) + bandH / 2
@@ -330,9 +322,10 @@ class TypingService : AccessibilityService() {
             val stroke = StrokeDescription(path, 0, 70)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
             val ok = dispatchGesture(gesture, null, null)
+            EventLog.info(this, "👆 نقرة في ($x, $y) → ${if (ok) "تم الإرسال" else "فشل الإرسال"}")
             Log.d(TAG, "👆 نقرة في ($x, $y) → $ok")
         } catch (e: Throwable) {
-            Log.e(TAG, "clickAtPosition خطأ: ${e.message}")
+            EventLog.error(this, "clickAtPosition خطأ: ${e.message}")
         }
     }
 
@@ -346,8 +339,8 @@ class TypingService : AccessibilityService() {
     private fun printAllKeyboardKeys() {
         try {
             val roots = getAllRoots()
-            Log.d(TAG, "======= أزرار الكيبورد (${roots.size} جذور) =======")
             var count = 0
+            val sample = StringBuilder()
             for (root in roots) {
                 fun traverse(node: AccessibilityNodeInfo?, depth: Int = 0) {
                     if (node == null) return
@@ -357,23 +350,21 @@ class TypingService : AccessibilityService() {
                     val rect = Rect().also { node.getBoundsInScreen(it) }
                     if (desc != null || txt != null) {
                         count++
-                        Log.d(TAG, "${"  ".repeat(depth)}🔑 '$txt' | '$desc' | $cls | $rect")
+                        sample.append("${"  ".repeat(depth)}🔑 '$txt' | '$desc' | $cls | $rect\n")
                     }
                     for (i in 0 until node.childCount) traverse(node.getChild(i), depth + 1)
                 }
                 traverse(root)
             }
-            Log.d(TAG, "إجمالي الأزرار المكتشفة: $count")
-            Log.d(TAG, "================================")
+            EventLog.info(this, "إجمالي الأزرار المكتشفة في الكيبورد: $count")
+            if (count > 0) EventLog.info(this, "عينة أزرار:\n$sample")
             for (r in roots) r?.recycle()
         } catch (e: Throwable) {
-            Log.e(TAG, "printAllKeyboardKeys خطأ: ${e.message}")
+            EventLog.error(this, "printAllKeyboardKeys خطأ: ${e.message}")
         }
     }
 
     private fun showToast(msg: String, dur: Int = Toast.LENGTH_SHORT) {
-        try {
-            Toast.makeText(this, msg, dur).show()
-        } catch (e: Throwable) {}
+        try { Toast.makeText(this, msg, dur).show() } catch (e: Throwable) {}
     }
 }
