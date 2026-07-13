@@ -19,6 +19,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
@@ -130,8 +131,13 @@ class TypingService : AccessibilityService() {
             return
         }
 
-        Log.d(TAG, "بدء الكتابة: ${typingText.length} حرف | الكيبورد: $keyboardRect")
-        showToast("🔤 بدء الكتابة...")
+        val srActive = isScreenReaderActive()
+        Log.d(TAG, "بدء الكتابة: ${typingText.length} حرف | الكيبورد: $keyboardRect | قارئ شاشة: $srActive")
+        if (srActive) {
+            showToast("🗣️ قارئ شاشة مُفعّل — استخدام شجرة الكيبورد")
+        } else {
+            showToast("🔤 بدء الكتابة...")
+        }
         printAllKeyboardKeys()
         useKeyboardTyping()
     }
@@ -291,6 +297,13 @@ class TypingService : AccessibilityService() {
     }
 
     // ===== 2) الحساب الإحداثي (بديل يعتمد على تخطيط الكيبورد) =====
+
+    private fun isScreenReaderActive(): Boolean {
+        return try {
+            val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+            am.isTouchExplorationEnabled
+        } catch (e: Throwable) { false }
+    }
 
     private fun getKeyboardRect(): Rect? {
         return try {
