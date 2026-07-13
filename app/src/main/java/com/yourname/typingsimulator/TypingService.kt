@@ -29,9 +29,10 @@ class TypingService : AccessibilityService() {
     private var isTyping = false
     private var typingText = ""
 
-    // منع التكرار: توقيت آخر كتابة + تبريد 8 ثواني
+    // أمان: تبريد + علامات مانعة للتكرار
     private var lastTypingEndTime = 0L
     private val cooldownMs = 8000L
+    private var keyboardWasOpen = false  // هل الكيبورد كان مفتوح في اللحظة السابقة؟
 
     companion object {
         const val CHANNEL_ID = "typing_service_channel"
@@ -48,9 +49,9 @@ class TypingService : AccessibilityService() {
             super.onCreate()
             createNotificationChannel()
             showPersistentNotification()
-            EventLog.info(this, "الخدمة مرتبطة بالتطبيق وتنتظر الأمر")
+            EventLog.info(this, "الخدمة مرتبطة بالتطبيق وتنتظر")
         } catch (e: Throwable) {
-            Log.e(TAG, "onCreate خطأ: ${e.message}")
+            Log.e(TAG, "onCreate: ${e.message}")
         }
     }
 
@@ -62,7 +63,7 @@ class TypingService : AccessibilityService() {
                 ).apply { description = "إشعار خدمة محاكاة الكتابة" }
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                     .createNotificationChannel(channel)
-            } catch (e: Throwable) { Log.e(TAG, "createNotificationChannel خطأ: ${e.message}") }
+            } catch (e: Throwable) { Log.e(TAG, "createNotificationChannel: ${e.message}") }
         }
     }
 
@@ -83,7 +84,7 @@ class TypingService : AccessibilityService() {
                 .build()
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(NOTIFICATION_ID, notification)
-        } catch (e: Throwable) { Log.e(TAG, "showPersistentNotification خطأ: ${e.message}") }
+        } catch (e: Throwable) { Log.e(TAG, "showPersistentNotification: ${e.message}") }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -91,17 +92,13 @@ class TypingService : AccessibilityService() {
             if (intent?.action == ACTION_START_TYPING) {
                 handler.postDelayed({ startTyping() }, 500)
             }
-        } catch (e: Throwable) { Log.e(TAG, "onStartCommand خطأ: ${e.message}") }
-        return try {
-            super.onStartCommand(intent, flags, startId)
-        } catch (e: Throwable) { START_STICKY }
+        } catch (e: Throwable) { Log.e(TAG, "onStartCommand: ${e.message}") }
+        return try { super.onStartCommand(intent, flags, startId) }
+        catch (e: Throwable) { START_STICKY }
     }
 
-    // ✅ زر إمكانية الوصول — ضغطة = تشغيل/إيقاف الكتابة
-    // توقيع API 33+ (displayId: Int): Boolean — شغال على أندرويد 14
-    @Suppress("DEPRECATION")
     // ✅ زر إمكانية الوصول — ضغطة = تشغيل، ضغطة ثانية = إيقاف
-    // متوفر في compileSdk 33 (API 33+) مع Boolean return
+    // يعمل مع Android SDK المحدث (أحدث أدوات المنصة)
     override fun onAccessibilityButtonClicked(displayId: Int): Boolean {
         try {
             if (isTyping) {
@@ -122,12 +119,39 @@ class TypingService : AccessibilityService() {
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    // ✅ المفتاح: نراقب فتح/قفل الكيبورد عبر أحداث النوافذ
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        try {
+            if (event == null) return
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+                val kbOpen = getKeyboardRect() != null
+                // انتقال من "مقفول" → "مفتوح" = بدأنا الكتابة
+                if (kbOpen && !keyboardWasOpen) {
+                    keyboardWasOpen = true
+                    EventLog.info(this, "اكتشاف فتح الكيبورد — محاولة بدء الكتابة")
+                    handler.postDelayed({ safeAutoType() }, 800)
+                } else if (!kbOpen) {
+                    keyboardWasOpen = false
+                }
+            }
+        } catch (e: Throwable) { Log.e(TAG, "onAccessibilityEvent: ${e.message}") }
+    }
 
     override fun onInterrupt() {
         isTyping = false
         handler.removeCallbacksAndMessages(null)
-        EventLog.info(this, "الخدمة توقفت (onInterrupt)")
+    }
+
+    // بدء آمن — مش هيبدأ لو في كتابة جارية أو التبريد لسه شغال
+    private fun safeAutoType() {
+        if (isTyping) return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingEndTime < cooldownMs) return
+        val text = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
+            .getString("TEXT_TO_TYPE", "") ?: ""
+        if (text.isEmpty()) return
+        startTyping()
     }
 
     // ===================================================================
@@ -137,35 +161,24 @@ class TypingService : AccessibilityService() {
             showToast("الكتابة جارية بالفعل...")
             return
         }
-
-        // تبريد
-        val now = System.currentTimeMillis()
-        if (now - lastTypingEndTime < cooldownMs) {
-            val remaining = (cooldownMs - (now - lastTypingEndTime)) / 1000
-            showToast("⏳ انتظر ${remaining}ث قبل إعادة التشغيل", Toast.LENGTH_LONG)
-            return
-        }
-
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
         typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
         if (typingText.isEmpty()) {
-            showToast("لا يوجد نص محفوظ — افتح التطبيق واحفظ نصاً")
+            showToast("لا يوجد نص محفوظ")
             return
         }
 
-        // ⛔️ مهم: ما نبدأش إلا لو الكيبورد مفتوح فعلاً
         val kbRect = getKeyboardRect()
         if (kbRect == null || kbRect.isEmpty()) {
-            showToast("⌨️ افتح لوحة المفاتيح في تطبيق الدردشة أولاً (نافذة IME غير موجودة)", Toast.LENGTH_LONG)
-            EventLog.warn(this, "الكيبورد غير مكتشف — IME window غير موجود")
+            showToast("⌨️ افتح لوحة المفاتيح أولاً", Toast.LENGTH_LONG)
             return
         }
 
         val wTypes = try { windows.map { it.type }.joinToString(",") } catch (e: Throwable) { "ERR" }
         val sr = isScreenReaderActive()
-
         EventLog.info(this, "=== بدء الكتابة: ${typingText.length} حرف ===")
         EventLog.info(this, "الكيبورد: $kbRect | نوافذ: [$wTypes] | قارئ شاشة: ${if (sr) "نعم" else "لا"}")
+        showToast("🔤 بدء الكتابة...")
 
         printAllKeyboardKeys()
         useKeyboardTyping()
@@ -183,21 +196,19 @@ class TypingService : AccessibilityService() {
                     if (!isTyping) return@postDelayed
                     val found = tapChar(currentChar)
                     if (found) EventLog.ok(this, "✓ '$currentChar' → نُقر")
-                    else EventLog.warn(this, "✗ '$currentChar' → لم يُعثر عليه")
+                    else EventLog.warn(this, "✗ '$currentChar' → لم يوجد")
                 } catch (e: Throwable) {
                     EventLog.error(this, "خطأ '$currentChar': ${e.message}")
                 }
             }, currentDelay)
-            // تأخير بشري 200-400ms
-            delay += (200..400).random().toLong()
+            delay += (180..380).random().toLong()
         }
-        val totalDelay = delay + 800
         handler.postDelayed({
             isTyping = false
             lastTypingEndTime = System.currentTimeMillis()
             EventLog.info(this, "=== انتهت الكتابة ===")
             showToast("✅ انتهت الكتابة", Toast.LENGTH_LONG)
-        }, totalDelay)
+        }, delay + 800)
     }
 
     private fun tapChar(targetChar: String): Boolean {
@@ -265,7 +276,6 @@ class TypingService : AccessibilityService() {
             root?.recycle()
             if (r != null) return Point(r.centerX(), r.centerY())
         }
-        // بديل إحداثي — فقط لو الكيبورد متأكد منه
         val rect = getKeyboardRect() ?: return null
         return if (targetChar == " ") Point(rect.centerX(), rect.bottom - rect.height() / 8)
         else Point(rect.right - rect.width() / 12, rect.bottom - rect.height() / 8)
@@ -299,7 +309,6 @@ class TypingService : AccessibilityService() {
                     if (r.width() > 0 && r.height() > 0) return r
                 }
             }
-            // ⛔️ ما نستخدمش تقدير لو الكيبورد مش مكتشف — نرجع null أحسن
             null
         } catch (e: Throwable) { null }
     }
@@ -328,8 +337,7 @@ class TypingService : AccessibilityService() {
             val path = Path().apply { moveTo(x, y) }
             val stroke = StrokeDescription(path, 0, 70)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            val ok = dispatchGesture(gesture, null, null)
-            Log.d(TAG, "👆 ($x, $y) → $ok")
+            dispatchGesture(gesture, null, null)
         } catch (e: Throwable) { EventLog.error(this, "clickAtPosition: ${e.message}") }
     }
 
