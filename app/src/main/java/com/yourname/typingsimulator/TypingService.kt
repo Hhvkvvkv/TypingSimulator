@@ -98,7 +98,8 @@ class TypingService : AccessibilityService() {
     }
 
     // ✅ زر إمكانية الوصول — ضغطة = تشغيل/إيقاف الكتابة
-    // متاح في API 33+ (compileSdk=33)
+    // توقيع API 33+ (displayId: Int): Boolean — شغال على أندرويد 14
+    @Suppress("DEPRECATION")
     override fun onAccessibilityButtonClicked(displayId: Int): Boolean {
         try {
             if (isTyping) {
