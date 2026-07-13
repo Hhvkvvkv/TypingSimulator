@@ -48,7 +48,7 @@ class TypingService : AccessibilityService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 val channel = NotificationChannel(
-                    CHANNEL_ID, "خدمة المحاكاة", NotificationManager.IMPORTANCE_LOW
+                    CHANNEL_ID, "خدمة المحاكاة", NotificationManager.IMPORTANCE_HIGH
                 ).apply { description = "إشعار خدمة محاكاة الكتابة" }
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                     .createNotificationChannel(channel)
@@ -69,18 +69,14 @@ class TypingService : AccessibilityService() {
             )
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("محاكاة الكتابة")
-                .setContentText("اضغط لبدء الكتابة")
+                .setContentText("اضغط هنا لبدء الكتابة")
                 .setSmallIcon(android.R.drawable.ic_menu_edit)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
                 .build()
-            if (Build.VERSION.SDK_INT >= 34) {
-                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                    .notify(NOTIFICATION_ID, notification)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(NOTIFICATION_ID, notification)
         } catch (e: Throwable) {
             Log.e(TAG, "showPersistentNotification خطأ: ${e.message}")
         }
@@ -88,7 +84,10 @@ class TypingService : AccessibilityService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
-            if (intent?.action == ACTION_START_TYPING) startTyping()
+            if (intent?.action == ACTION_START_TYPING) {
+                // تأخير بسيط عشان الكيبورد يستقر بعد ضغط الإشعار
+                handler.postDelayed({ startTyping() }, 600)
+            }
         } catch (e: Throwable) {
             Log.e(TAG, "onStartCommand خطأ: ${e.message}")
         }
@@ -96,6 +95,16 @@ class TypingService : AccessibilityService() {
             super.onStartCommand(intent, flags, startId)
         } catch (e: Throwable) {
             START_STICKY
+        }
+    }
+
+    // ✅ زر إمكانية الوصول (Accessibility Button) — يبدأ الكتابة مباشرة
+    @SuppressLint("NewApi")
+    override fun onAccessibilityButtonClicked() {
+        try {
+            handler.postDelayed({ startTyping() }, 600)
+        } catch (e: Throwable) {
+            Log.e(TAG, "onAccessibilityButtonClicked خطأ: ${e.message}")
         }
     }
 
@@ -117,20 +126,29 @@ class TypingService : AccessibilityService() {
         val sharedPref = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
         typingText = sharedPref.getString("TEXT_TO_TYPE", "") ?: ""
         if (typingText.isEmpty()) {
-            showToast("لا يوجد نص محفوظ")
+            showToast("لا يوجد نص محفوظ — افتح التطبيق واحفظ نصاً")
             return
         }
+
+        // التأكد من وجود لوحة المفاتيح مفتوحة
+        val keyboardOpen = try {
+            windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        } catch (e: Throwable) { false }
+
+        if (!keyboardOpen) {
+            showToast("⌨️ افتح لوحة المفاتيح في تطبيق الدردشة أولاً (اضغط على مربع نص)")
+            return
+        }
+
         Log.d(TAG, "بدء الكتابة: ${typingText.length} حرف")
-        showToast("🔍 مسح الكيبورد...")
+        showToast("🔤 بدء الكتابة...")
         printAllKeyboardKeys()
         useKeyboardTyping()
     }
 
     @SuppressLint("RestrictedApi")
     private fun useKeyboardTyping() {
-        printAllKeyboardKeys()
         isTyping = true
-        showToast("🔤 كتابة عبر الكيبورد...")
         var delay = 0L
         var successCount = 0
         var failCount = 0
@@ -146,7 +164,7 @@ class TypingService : AccessibilityService() {
                     Log.e(TAG, "loop خطأ: ${e.message}")
                 }
             }, currentDelay)
-            delay += (180..400).random().toLong()
+            delay += (200..450).random().toLong()
         }
         val totalDelay = delay + 1000
         handler.postDelayed({
@@ -162,7 +180,19 @@ class TypingService : AccessibilityService() {
             val imeRootNode = allWindows.find {
                 it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD
             }?.root ?: return false
-            val keyRect = searchForCharNode(imeRootNode, targetChar.lowercase())
+
+            // محاولة 1: البحث المباشر عن الحرف
+            var keyRect = searchForCharNode(imeRootNode, targetChar.lowercase())
+
+            // محاولة 2: أزرار خاصة (مسافة / إدخال)
+            if (keyRect == null) {
+                keyRect = when (targetChar) {
+                    " " -> searchForSpecialKey(imeRootNode, listOf("space", "مسافة", "spacebar"))
+                    "\n" -> searchForSpecialKey(imeRootNode, listOf("enter", "إدخال", "done", "go", "next"))
+                    else -> null
+                }
+            }
+
             if (keyRect != null && keyRect.width() > 0 && keyRect.height() > 0) {
                 Log.d(TAG, "📍 '$targetChar' في ${keyRect.toShortString()}")
                 clickAtPosition(keyRect.centerX().toFloat(), keyRect.centerY().toFloat())
@@ -170,12 +200,37 @@ class TypingService : AccessibilityService() {
                 true
             } else {
                 imeRootNode.recycle()
+                Log.w(TAG, "🔍 '$targetChar' لم يوجد")
                 false
             }
         } catch (e: Throwable) {
             Log.e(TAG, "findAndClickKey خطأ: ${e.message}")
             false
         }
+    }
+
+    private fun searchForSpecialKey(node: AccessibilityNodeInfo?, keywords: List<String>): Rect? {
+        if (node == null) return null
+        return try {
+            val contentDesc = node.contentDescription?.toString()?.lowercase()?.trim() ?: ""
+            val text = node.text?.toString()?.lowercase()?.trim() ?: ""
+            val nodeText = "$contentDesc $text"
+            if (keywords.any { nodeText.contains(it) }) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.width() > 0 && rect.height() > 0) return rect
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i)
+                val result = searchForSpecialKey(child, keywords)
+                if (result != null) {
+                    child?.recycle()
+                    return result
+                }
+                child?.recycle()
+            }
+            null
+        } catch (e: Throwable) { null }
     }
 
     private fun searchForCharNode(node: AccessibilityNodeInfo?, targetChar: String): Rect? {
@@ -204,18 +259,16 @@ class TypingService : AccessibilityService() {
                 child?.recycle()
             }
             null
-        } catch (e: Throwable) {
-            Log.e(TAG, "searchForCharNode خطأ: ${e.message}")
-            null
-        }
+        } catch (e: Throwable) { null }
     }
 
     private fun clickAtPosition(x: Float, y: Float) {
         try {
             val path = Path().apply { moveTo(x, y) }
-            val stroke = StrokeDescription(path, 0, 50)
+            val stroke = StrokeDescription(path, 0, 60)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            dispatchGesture(gesture, null, null)
+            val ok = dispatchGesture(gesture, null, null)
+            Log.d(TAG, "👆 نقرة في ($x, $y) → $ok")
         } catch (e: Throwable) {
             Log.e(TAG, "clickAtPosition خطأ: ${e.message}")
         }
@@ -250,8 +303,6 @@ class TypingService : AccessibilityService() {
     private fun showToast(msg: String) {
         try {
             Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-        } catch (e: Throwable) {
-            Log.e(TAG, "showToast خطأ: ${e.message}")
-        }
+        } catch (e: Throwable) {}
     }
 }
