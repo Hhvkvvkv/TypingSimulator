@@ -12,4 +12,5 @@
     <string name="tap_text_field">الرجاء الضغط على مربع نص (مربع دردشة) أولاً</string>
     <string name="dark_mode">🌙 الوضع الليلي</string>
     <string name="btn_view_log">📋 سجل الأخطاء والمهام</string>
+    <string name="btn_start_typing">▶️ تشغيل الكتابة الآن</string>
 </resources>

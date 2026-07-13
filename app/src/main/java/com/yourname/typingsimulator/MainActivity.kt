@@ -60,6 +60,29 @@ class MainActivity : AppCompatActivity() {
             btnOpenLog.setOnClickListener {
                 startActivity(Intent(this, LogActivity::class.java))
             }
+
+            val btnStartTyping = findViewById<Button>(R.id.btnStartTyping)
+            btnStartTyping.setOnClickListener {
+                // نتأكد إن الخدمة مفعّلة كـ Accessibility Service
+                val am = getSystemService(android.content.Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+                val enabled = am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                    .any { it.resolveInfo.serviceInfo.packageName == packageName }
+                if (!enabled) {
+                    Toast.makeText(this, "فعّل خدمة إمكانية الوصول أولاً", Toast.LENGTH_LONG).show()
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    return@setOnClickListener
+                }
+                // نشغّل الكتابة مباشرة عبر إرسال Intent للخدمة
+                val intent = Intent(this, TypingService::class.java).apply {
+                    action = TypingService.ACTION_START_TYPING
+                }
+                try {
+                    startService(intent)
+                    Toast.makeText(this, "✅ تم إرسال أمر الكتابة للخدمة", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "تعذّر التشغيل: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         } catch (e: Throwable) {
             Log.e("MainActivity", "خطأ: ${e.message}")
             Toast.makeText(this, "حدث خطأ: ${e.message}", Toast.LENGTH_LONG).show()
