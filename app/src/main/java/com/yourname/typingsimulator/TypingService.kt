@@ -99,27 +99,6 @@ class TypingService : AccessibilityService() {
 
     // ✅ زر إمكانية الوصول — ضغطة = تشغيل، ضغطة ثانية = إيقاف
     // يعمل مع Android SDK المحدث (أحدث أدوات المنصة)
-    override fun onAccessibilityButtonClicked(displayId: Int): Boolean {
-        try {
-            if (isTyping) {
-                isTyping = false
-                handler.removeCallbacksAndMessages(null)
-                handler.postDelayed({ lastTypingEndTime = System.currentTimeMillis() }, 100)
-                EventLog.info(this, "إيقاف الكتابة من زر الوصول")
-                showToast("🛑 تم إيقاف الكتابة")
-            } else {
-                EventLog.info(this, "تشغيل الكتابة من زر إمكانية الوصول")
-                showToast("تم التفعيل ✅")
-                handler.postDelayed({ startTyping() }, 700)
-            }
-            return true
-        } catch (e: Throwable) {
-            Log.e(TAG, "زر الوصول خطأ: ${e.message}")
-            return false
-        }
-    }
-
-    // ✅ المفتاح: نراقب فتح/قفل الكيبورد عبر أحداث النوافذ
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
             if (event == null) return
