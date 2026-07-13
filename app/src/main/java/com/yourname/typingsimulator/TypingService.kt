@@ -97,27 +97,24 @@ class TypingService : AccessibilityService() {
         } catch (e: Throwable) { START_STICKY }
     }
 
-    // ✅ زر إمكانية الوصول — أول ضغطة تشغّل الكتابة، ثاني ضغطة توقف
+    // ✅ زر إمكانية الوصول — ضغطة = تشغيل/إيقاف الكتابة
+    // متاح في API 33+ (compileSdk=33)
     override fun onAccessibilityButtonClicked(displayId: Int): Boolean {
         try {
             if (isTyping) {
-                // ضغطة تانية: إيقاف الكتابة
                 isTyping = false
                 handler.removeCallbacksAndMessages(null)
-                handler.postDelayed({
-                    lastTypingEndTime = System.currentTimeMillis()
-                }, 100)
-                EventLog.info(this, "تم إيقاف الكتابة يدوياً من زر الوصول")
+                handler.postDelayed({ lastTypingEndTime = System.currentTimeMillis() }, 100)
+                EventLog.info(this, "إيقاف الكتابة من زر الوصول")
                 showToast("🛑 تم إيقاف الكتابة")
             } else {
-                // ضغطة أولى: تشغيل الكتابة
                 EventLog.info(this, "تشغيل الكتابة من زر إمكانية الوصول")
                 showToast("تم التفعيل ✅")
                 handler.postDelayed({ startTyping() }, 700)
             }
             return true
         } catch (e: Throwable) {
-            Log.e(TAG, "onAccessibilityButtonClicked خطأ: ${e.message}")
+            Log.e(TAG, "زر الوصول خطأ: ${e.message}")
             return false
         }
     }

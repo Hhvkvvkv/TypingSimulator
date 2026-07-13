@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.yourname.typingsimulator"
-    compileSdk = 34
+    compileSdk = 33
 
     defaultConfig {
         applicationId = "com.yourname.typingsimulator"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 33
         versionCode = 2
         versionName = "2.0"
     }
