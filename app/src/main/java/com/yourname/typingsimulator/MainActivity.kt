@@ -15,37 +15,31 @@ import androidx.appcompat.widget.SwitchCompat
 class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // ⚠️ مهم: ضبط الوضع الليلي قبل super.onCreate()
-        val prefs = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("DARK_MODE", false)) {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-        }
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
         try {
+            val prefs = getSharedPreferences("AppPrefs", Context.MODE_PRIVATE)
+            if (prefs.getBoolean("DARK_MODE", false)) {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+            }
+            super.onCreate(savedInstanceState)
+            setContentView(R.layout.activity_main)
+
             val etTargetText = findViewById<EditText>(R.id.etTargetText)
             val btnSave = findViewById<Button>(R.id.btnSave)
             val btnEnableAccessibility = findViewById<Button>(R.id.btnEnableAccessibility)
             val switchDarkMode = findViewById<SwitchCompat>(R.id.switchDarkMode)
 
-            // تحميل النص المحفوظ
             etTargetText.setText(prefs.getString("TEXT_TO_TYPE", "") ?: "")
-
-            // الوضع الليلي — تحديث الـ Switch فقط ولا نستدعي setDefaultNightMode
             switchDarkMode.isChecked = prefs.getBoolean("DARK_MODE", false)
 
             switchDarkMode.setOnCheckedChangeListener { _, isChecked ->
                 prefs.edit().putBoolean("DARK_MODE", isChecked).apply()
-                if (isChecked) {
-                    AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-                } else {
-                    AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-                }
-                recreate() // إعادة إنشاء النشاط لتطبيق الثيم
+                AppCompatDelegate.setDefaultNightMode(
+                    if (isChecked) AppCompatDelegate.MODE_NIGHT_YES
+                    else AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                )
+                recreate()
             }
 
-            // حفظ النص
             btnSave.setOnClickListener {
                 val text = etTargetText.text.toString()
                 if (text.isNotEmpty()) {
@@ -56,13 +50,12 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // فتح إعدادات إمكانية الوصول
             btnEnableAccessibility.setOnClickListener {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 Toast.makeText(this, "فعّل خدمة ${getString(R.string.app_name)} من الإعدادات",
                     Toast.LENGTH_LONG).show()
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("MainActivity", "خطأ: ${e.message}")
             Toast.makeText(this, "حدث خطأ: ${e.message}", Toast.LENGTH_LONG).show()
         }

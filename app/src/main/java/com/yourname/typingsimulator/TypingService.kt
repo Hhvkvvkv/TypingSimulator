@@ -32,18 +32,11 @@ class TypingService : AccessibilityService() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START_TYPING = "com.yourname.typingsimulator.START_TYPING"
         const val TAG = "TypingService"
-        const val KEYCODE_DEL = 67
-        const val KEYCODE_ENTER = 66
-        const val KEYCODE_SPACE = 62
     }
 
-    /**
-     * ✅ كل دالة محمية بـ Throwable — أي خطأ (حتى Error) مش بيكراش الخدمة
-     */
     override fun onCreate() {
         try {
             super.onCreate()
-            ShizukuHelper.init(this)
             createNotificationChannel()
             showPersistentNotification()
         } catch (e: Throwable) {
@@ -74,10 +67,9 @@ class TypingService : AccessibilityService() {
                 this, 0, startIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val shizukuStatus = if (ShizukuHelper.isAvailable()) "⚡ Shizuku" else "🔍 Accessibility"
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("محاكاة الكتابة")
-                .setContentText("اضغط لبدء الكتابة | $shizukuStatus")
+                .setContentText("اضغط لبدء الكتابة")
                 .setSmallIcon(android.R.drawable.ic_menu_edit)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
@@ -114,7 +106,7 @@ class TypingService : AccessibilityService() {
     }
 
     // ===================================================================
-    //  المحرك الرئيسي
+    //  المحرك: البحث عن الحروف في الكيبورد والنقر عليها (محاكاة بشرية)
     // ===================================================================
 
     private fun startTyping() {
@@ -129,59 +121,13 @@ class TypingService : AccessibilityService() {
             return
         }
         Log.d(TAG, "بدء الكتابة: ${typingText.length} حرف")
-        if (ShizukuHelper.isAvailable()) {
-            useShizukuTyping()
-            return
-        }
         showToast("🔍 مسح الكيبورد...")
         printAllKeyboardKeys()
-        useAccessibilityTyping()
+        useKeyboardTyping()
     }
-
-    // ===================== استراتيجية 1: Shizuku =====================
-
-    private fun useShizukuTyping() {
-        isTyping = true
-        showToast("⚡ Shizuku: كتابة مباشرة...")
-        var index = 0
-        val totalChars = typingText.length
-        val runnable = object : Runnable {
-            override fun run() {
-                try {
-                    if (index >= totalChars || !isTyping) {
-                        isTyping = false
-                        if (index >= totalChars) showToast("✅ تمت كتابة $totalChars حرف!")
-                        return
-                    }
-                    val char = typingText[index].toString()
-                    val success = when (char) {
-                        "\n" -> ShizukuHelper.keyEvent(KEYCODE_ENTER)
-                        " " -> ShizukuHelper.keyEvent(KEYCODE_SPACE)
-                        else -> ShizukuHelper.inputText(char)
-                    }
-                    if (success) {
-                        index++
-                        val delay = if (char == " " || char == "\n") 120..250 else 60..150
-                        handler.postDelayed(this, delay.random().toLong())
-                    } else {
-                        Log.w(TAG, "Shizuku فشل للحرف '$char' — ننتقل Accessibility")
-                        isTyping = false
-                        useAccessibilityTyping()
-                    }
-                } catch (e: Throwable) {
-                    Log.e(TAG, "خطأ في Shizuku: ${e.message}")
-                    isTyping = false
-                    useAccessibilityTyping()
-                }
-            }
-        }
-        handler.post(runnable)
-    }
-
-    // ============= استراتيجية 2: Accessibility Keyboard Scan =============
 
     @SuppressLint("RestrictedApi")
-    private fun useAccessibilityTyping() {
+    private fun useKeyboardTyping() {
         printAllKeyboardKeys()
         isTyping = true
         showToast("🔤 كتابة عبر الكيبورد...")
@@ -195,24 +141,9 @@ class TypingService : AccessibilityService() {
                 try {
                     if (!isTyping) return@postDelayed
                     val found = findAndClickKey(currentChar)
-                    if (found) {
-                        successCount++
-                    } else {
-                        failCount++
-                        if (ShizukuHelper.isAvailable()) {
-                            try {
-                                when (currentChar) {
-                                    "\n" -> ShizukuHelper.keyEvent(KEYCODE_ENTER)
-                                    " " -> ShizukuHelper.keyEvent(KEYCODE_SPACE)
-                                    else -> ShizukuHelper.inputText(currentChar)
-                                }
-                            } catch (e: Throwable) {
-                                Log.e(TAG, "Shizuku fallback فشل: ${e.message}")
-                            }
-                        }
-                    }
+                    if (found) successCount++ else failCount++
                 } catch (e: Throwable) {
-                    Log.e(TAG, "useAccessibilityTyping loop خطأ: ${e.message}")
+                    Log.e(TAG, "loop خطأ: ${e.message}")
                 }
             }, currentDelay)
             delay += (180..400).random().toLong()
@@ -289,8 +220,6 @@ class TypingService : AccessibilityService() {
             Log.e(TAG, "clickAtPosition خطأ: ${e.message}")
         }
     }
-
-    // ===================== أدوات التشخيص =====================
 
     private fun printAllKeyboardKeys() {
         try {

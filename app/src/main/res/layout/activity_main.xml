@@ -22,7 +22,7 @@
         android:inputType="textMultiLine"
         android:minLines="3"
         android:padding="16dp"
-        android:background="@android:drawable/editbox_background"
+        android:background="#EEEEEE"
         android:layout_marginBottom="16dp"/>
 
     <Button
